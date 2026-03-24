@@ -1,0 +1,589 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowLeft, Loader2, Upload } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+import type { Page } from "../App";
+import { ExternalBlob, Status } from "../backend";
+import { Button } from "../components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "../components/ui/card";
+import { Input } from "../components/ui/input";
+import { useActor } from "../hooks/useActor";
+
+interface Props {
+  navigate: (p: Page) => void;
+  tokenId?: string;
+}
+
+const SERVICE_CATEGORIES: Record<string, string[]> = {
+  "Business Registration": [
+    "Trade License",
+    "MSME Certificate",
+    "Shop & Est Registration",
+    "GST Registration",
+    "PF Services",
+    "Food License (FSSAI)",
+    "Import-Export License",
+    "Hallmark Registration",
+    "Fertilizer License",
+    "Drug License",
+    "Club & Trust Registration",
+    "Swiggy & Zomato Listing",
+  ],
+  "Tax & Legal": [
+    "Income Tax Return (ITR)",
+    "Professional Tax",
+    "ISO & TM Certification",
+    "Property Tax",
+    "Agreement & Affidavit",
+    "C.A. & Legal Services",
+  ],
+  "Land & Property": [
+    "Land Mutation",
+    "Land Conversion",
+    "Certified Deed (Dalil)",
+    "Parcha",
+    "Khajna (Land Revenue)",
+  ],
+  "Govt IDs & Certificates": [
+    "PAN Card",
+    "Voter Card",
+    "Ration Card",
+    "E-Shram Card",
+    "Birth Certificate",
+    "Caste Certificate",
+    "Income Certificate",
+  ],
+  "Vehicle & Insurance": [
+    "Motor Vehicle Insurance",
+    "Driving License",
+    "RTO Related Services",
+    "Vehicle Authorize Letter",
+  ],
+  "Safety & General": [
+    "Fire Safety License",
+    "Police Clearance",
+    "Marriage Registration",
+    "Estimate Project Report",
+    "D.T.P. & Graphics Design",
+    "Apps, Website & API Development",
+    "Excel, Word & Digital Solutions",
+  ],
+};
+
+function tsToDate(ts?: bigint): string {
+  if (!ts) return "";
+  return new Date(Number(ts / 1_000_000n)).toISOString().split("T")[0];
+}
+function dateToTs(s: string): bigint | undefined {
+  if (!s) return undefined;
+  return BigInt(new Date(s).getTime()) * 1_000_000n;
+}
+
+const lbl = "block text-sm font-medium text-slate-300 mb-1";
+const fieldCls =
+  "bg-slate-700 border-slate-600 text-white placeholder:text-slate-500";
+
+export function CustomerForm({ navigate, tokenId }: Props) {
+  const { actor, isFetching } = useActor();
+  const qc = useQueryClient();
+  const isEdit = !!tokenId;
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const { data: existing, isLoading: loadingExisting } = useQuery({
+    queryKey: ["customer", tokenId],
+    queryFn: () => actor!.getCustomer(tokenId!),
+    enabled: !!actor && !!tokenId,
+  });
+
+  const { data: customServices } = useQuery({
+    queryKey: ["custom-services"],
+    queryFn: () => actor!.listCustomServices(),
+    enabled: !!actor,
+  });
+
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [serviceCategory, setServiceCategory] = useState(
+    "Business Registration",
+  );
+  const [serviceType, setServiceType] = useState("");
+  const [customServiceName, setCustomServiceName] = useState("");
+  const [isCustom, setIsCustom] = useState(false);
+  const [applicationNo, setApplicationNo] = useState("");
+  const [applicationDate, setApplicationDate] = useState(
+    new Date().toISOString().split("T")[0],
+  );
+  const [status, setStatus] = useState<Status>(Status.pending);
+  const [deliveryDate, setDeliveryDate] = useState("");
+  const [expiryDate, setExpiryDate] = useState("");
+  const [totalCharged, setTotalCharged] = useState("");
+  const [govtFees, setGovtFees] = useState("");
+  const [advancePaid, setAdvancePaid] = useState("");
+  const [notes, setNotes] = useState("");
+  const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
+  const [uploading, setUploading] = useState(false);
+
+  const netProfit =
+    (Number.parseFloat(totalCharged) || 0) - (Number.parseFloat(govtFees) || 0);
+  const balanceDue =
+    (Number.parseFloat(totalCharged) || 0) -
+    (Number.parseFloat(advancePaid) || 0);
+
+  useEffect(() => {
+    if (existing) {
+      setName(existing.name);
+      setPhone(existing.phone);
+      setServiceCategory(existing.serviceCategory);
+      if (existing.customServiceName) {
+        setIsCustom(true);
+        setServiceType("__custom__");
+        setCustomServiceName(existing.customServiceName);
+      } else {
+        setServiceType(existing.serviceType);
+        setIsCustom(false);
+      }
+      setApplicationNo(existing.applicationNo ?? "");
+      setApplicationDate(tsToDate(existing.applicationDate));
+      setStatus(existing.currentStatus);
+      setDeliveryDate(tsToDate(existing.deliveryDate));
+      setExpiryDate(tsToDate(existing.expiryDate));
+      setTotalCharged(String(existing.totalCharged));
+      setGovtFees(String(existing.govtFees));
+      setAdvancePaid(String(existing.advancePaid));
+      setNotes(existing.notes ?? "");
+    }
+  }, [existing]);
+
+  const saveMut = useMutation({
+    mutationFn: async () => {
+      if (!actor)
+        throw new Error(
+          "Server not ready. Please wait a moment and try again.",
+        );
+      setUploading(true);
+      const docBlobs: ExternalBlob[] = await Promise.all(
+        uploadedFiles.map(async (f) => {
+          const bytes = new Uint8Array(await f.arrayBuffer());
+          return ExternalBlob.fromBytes(bytes);
+        }),
+      );
+      setUploading(false);
+
+      const finalServiceType = isCustom
+        ? customServiceName || "Custom Service"
+        : serviceType;
+      const input = {
+        name,
+        phone,
+        serviceCategory,
+        serviceType: finalServiceType,
+        customServiceName: isCustom ? customServiceName : undefined,
+        applicationNo: applicationNo || undefined,
+        applicationDate:
+          BigInt(new Date(applicationDate).getTime()) * 1_000_000n,
+        currentStatus: status,
+        deliveryDate: dateToTs(deliveryDate),
+        expiryDate: dateToTs(expiryDate),
+        totalCharged: Number.parseFloat(totalCharged) || 0,
+        govtFees: Number.parseFloat(govtFees) || 0,
+        advancePaid: Number.parseFloat(advancePaid) || 0,
+        notes: notes || undefined,
+        documentBlobIds: docBlobs,
+      };
+
+      if (isCustom && customServiceName) {
+        try {
+          await actor.addCustomService(customServiceName, serviceCategory);
+        } catch {
+          // ignore duplicate
+        }
+      }
+
+      if (isEdit && tokenId) {
+        await actor.updateCustomer(tokenId, input);
+        return tokenId;
+      }
+      return await actor.createCustomer(input);
+    },
+    onSuccess: (tid) => {
+      qc.invalidateQueries({ queryKey: ["customers"] });
+      qc.invalidateQueries({ queryKey: ["customer", tid] });
+      toast.success(isEdit ? "Customer updated!" : "Customer created!");
+      navigate({ name: "customer-detail", tokenId: tid as string });
+    },
+    onError: (e) => {
+      setUploading(false);
+      toast.error(`Failed: ${String(e)}`);
+    },
+  });
+
+  const allServicesForCategory = [
+    ...(SERVICE_CATEGORIES[serviceCategory] ?? []),
+    ...(customServices ?? [])
+      .filter((s) => s.category === serviceCategory)
+      .map((s) => s.name),
+  ];
+
+  if (loadingExisting) {
+    return (
+      <div className="flex justify-center py-12">
+        <Loader2 className="h-8 w-8 animate-spin text-amber-500" />
+      </div>
+    );
+  }
+
+  const isConnecting = isFetching && !actor;
+  const isSubmitDisabled =
+    saveMut.isPending || uploading || !actor || isFetching;
+
+  return (
+    <div className="space-y-5 max-w-2xl">
+      <div className="flex items-center gap-3">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => navigate({ name: "customers" })}
+          className="text-slate-400 hover:text-white"
+        >
+          <ArrowLeft className="h-5 w-5" />
+        </Button>
+        <h1 className="text-2xl font-bold text-white">
+          {isEdit ? "Edit Customer" : "New Customer"}
+        </h1>
+        {isConnecting && (
+          <div className="flex items-center gap-2 text-amber-400 text-sm ml-2">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span>Connecting to server...</span>
+          </div>
+        )}
+      </div>
+
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          saveMut.mutate();
+        }}
+        className="space-y-4"
+      >
+        {/* Customer Info */}
+        <Card className="bg-slate-800 border-slate-700">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-white text-base">
+              Customer Info
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <p className={lbl}>Name *</p>
+                <Input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  required
+                  className={fieldCls}
+                  placeholder="Customer name"
+                  data-ocid="customer.input"
+                />
+              </div>
+              <div>
+                <p className={lbl}>Phone *</p>
+                <Input
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  required
+                  className={fieldCls}
+                  placeholder="Phone number"
+                  data-ocid="customer.input"
+                />
+              </div>
+            </div>
+            <div>
+              <p className={lbl}>Application No</p>
+              <Input
+                value={applicationNo}
+                onChange={(e) => setApplicationNo(e.target.value)}
+                className={fieldCls}
+                placeholder="Optional"
+                data-ocid="customer.input"
+              />
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Service */}
+        <Card className="bg-slate-800 border-slate-700">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-white text-base">
+              Service Details
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div>
+              <p className={lbl}>Service Category *</p>
+              <select
+                value={serviceCategory}
+                onChange={(e) => {
+                  setServiceCategory(e.target.value);
+                  setServiceType("");
+                  setIsCustom(false);
+                }}
+                className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-md text-white text-sm"
+                data-ocid="customer.select"
+              >
+                {Object.keys(SERVICE_CATEGORIES).map((cat) => (
+                  <option key={cat}>{cat}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <p className={lbl}>Service Type *</p>
+              <select
+                value={serviceType}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setServiceType(v);
+                  setIsCustom(v === "__custom__");
+                }}
+                className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-md text-white text-sm"
+                required
+                data-ocid="customer.select"
+              >
+                <option value="">Select service...</option>
+                {allServicesForCategory.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+                <option value="__custom__">Other (Custom)</option>
+              </select>
+            </div>
+            {isCustom && (
+              <div>
+                <p className={lbl}>Custom Service Name *</p>
+                <Input
+                  value={customServiceName}
+                  onChange={(e) => setCustomServiceName(e.target.value)}
+                  required
+                  className={fieldCls}
+                  placeholder="Enter service name"
+                  data-ocid="customer.input"
+                />
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Status & Dates */}
+        <Card className="bg-slate-800 border-slate-700">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-white text-base">
+              Status & Dates
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div>
+              <p className={lbl}>Status</p>
+              <select
+                value={status}
+                onChange={(e) => setStatus(e.target.value as Status)}
+                className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-md text-white text-sm"
+                data-ocid="customer.select"
+              >
+                <option value={Status.pending}>Pending</option>
+                <option value={Status.in_process}>In-Process</option>
+                <option value={Status.completed}>Completed</option>
+              </select>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <p className={lbl}>Application Date</p>
+                <Input
+                  type="date"
+                  value={applicationDate}
+                  onChange={(e) => setApplicationDate(e.target.value)}
+                  className={fieldCls}
+                />
+              </div>
+              <div>
+                <p className={lbl}>Delivery Date</p>
+                <Input
+                  type="date"
+                  value={deliveryDate}
+                  onChange={(e) => setDeliveryDate(e.target.value)}
+                  className={fieldCls}
+                />
+              </div>
+              <div>
+                <p className={lbl}>Expiry / Renewal</p>
+                <Input
+                  type="date"
+                  value={expiryDate}
+                  onChange={(e) => setExpiryDate(e.target.value)}
+                  className={fieldCls}
+                />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Financials */}
+        <Card className="bg-slate-800 border-slate-700">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-white text-base">
+              Financial Details
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <p className={lbl}>Total Charged (₹)</p>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={totalCharged}
+                  onChange={(e) => setTotalCharged(e.target.value)}
+                  className={fieldCls}
+                  placeholder="0"
+                />
+              </div>
+              <div>
+                <p className={lbl}>Govt / Direct Fees (₹)</p>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={govtFees}
+                  onChange={(e) => setGovtFees(e.target.value)}
+                  className={fieldCls}
+                  placeholder="0"
+                />
+              </div>
+              <div>
+                <p className={lbl}>Net Profit (₹)</p>
+                <div className="px-3 py-2 rounded-md text-green-400 font-bold bg-slate-700 border border-slate-600">
+                  ₹{netProfit.toFixed(2)}
+                </div>
+              </div>
+              <div>
+                <p className={lbl}>Advance Paid (₹)</p>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={advancePaid}
+                  onChange={(e) => setAdvancePaid(e.target.value)}
+                  className={fieldCls}
+                  placeholder="0"
+                />
+              </div>
+              <div className="col-span-2">
+                <p className={lbl}>Balance Due (₹)</p>
+                <div
+                  className={`px-3 py-2 rounded-md font-bold bg-slate-700 border border-slate-600 ${
+                    balanceDue > 0 ? "text-red-400" : "text-green-400"
+                  }`}
+                >
+                  ₹{balanceDue.toFixed(2)}
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Notes & Docs */}
+        <Card className="bg-slate-800 border-slate-700">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-white text-base">
+              Notes & Documents
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div>
+              <p className={lbl}>Notes</p>
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={3}
+                className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-md text-white placeholder:text-slate-500 text-sm resize-none"
+                placeholder="Any additional notes..."
+                data-ocid="customer.textarea"
+              />
+            </div>
+            <div>
+              <p className={lbl}>Upload Documents</p>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="flex items-center gap-2 px-3 py-2 bg-slate-700 border border-dashed border-slate-500 rounded-md text-slate-400 hover:border-amber-500 hover:text-amber-400 cursor-pointer text-sm transition-colors w-full"
+                data-ocid="customer.upload_button"
+              >
+                <Upload className="h-4 w-4" />
+                <span>
+                  {uploadedFiles.length > 0
+                    ? `${uploadedFiles.length} file(s) selected`
+                    : "Click to upload PDFs/images"}
+                </span>
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept=".pdf,.jpg,.jpeg,.png"
+                className="hidden"
+                onChange={(e) =>
+                  setUploadedFiles(Array.from(e.target.files ?? []))
+                }
+              />
+              {uploadedFiles.length > 0 && (
+                <div className="mt-1 space-y-0.5">
+                  {uploadedFiles.map((f) => (
+                    <div key={f.name} className="text-xs text-slate-400">
+                      {f.name}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="flex gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => navigate({ name: "customers" })}
+            className="border-slate-600 text-slate-300 hover:bg-slate-700"
+            data-ocid="customer.cancel_button"
+          >
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            disabled={isSubmitDisabled}
+            className="bg-amber-500 hover:bg-amber-600 text-slate-900 font-semibold flex-1 disabled:opacity-60"
+            data-ocid="customer.submit_button"
+          >
+            {saveMut.isPending || uploading ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                Saving...
+              </>
+            ) : isFetching && !actor ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                Connecting...
+              </>
+            ) : isEdit ? (
+              "Update Customer"
+            ) : (
+              "Create Customer"
+            )}
+          </Button>
+        </div>
+      </form>
+    </div>
+  );
+}
