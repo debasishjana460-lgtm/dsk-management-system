@@ -143,6 +143,8 @@ export interface backendInterface {
     createCustomer(input: CustomerInput): Promise<string>;
     deleteDocumentLibraryItem(id: string): Promise<boolean>;
     deleteExpense(id: string): Promise<boolean>;
+    deleteRenewalRecord(id: string): Promise<boolean>;
+    getAllRenewalHistory(): Promise<Array<RenewalRecord>>;
     getCallerUserProfile(): Promise<UserProfile | null>;
     getCallerUserRole(): Promise<UserRole>;
     getCustomer(tokenId: string): Promise<CustomerRecord>;
@@ -161,4 +163,5 @@ export interface backendInterface {
     saveCallerUserProfile(profile: UserProfile): Promise<void>;
     softDeleteCustomer(tokenId: string): Promise<boolean>;
     updateCustomer(tokenId: string, input: CustomerInput): Promise<boolean>;
+    updateRenewalRecord(id: string, input: RenewalInput): Promise<boolean>;
 }

@@ -161,6 +161,8 @@ export interface _SERVICE {
   'createCustomer' : ActorMethod<[CustomerInput], string>,
   'deleteDocumentLibraryItem' : ActorMethod<[string], boolean>,
   'deleteExpense' : ActorMethod<[string], boolean>,
+  'deleteRenewalRecord' : ActorMethod<[string], boolean>,
+  'getAllRenewalHistory' : ActorMethod<[], Array<RenewalRecord>>,
   'getCallerUserProfile' : ActorMethod<[], [] | [UserProfile]>,
   'getCallerUserRole' : ActorMethod<[], UserRole>,
   'getCustomer' : ActorMethod<[string], CustomerRecord>,
@@ -179,6 +181,7 @@ export interface _SERVICE {
   'saveCallerUserProfile' : ActorMethod<[UserProfile], undefined>,
   'softDeleteCustomer' : ActorMethod<[string], boolean>,
   'updateCustomer' : ActorMethod<[string, CustomerInput], boolean>,
+  'updateRenewalRecord' : ActorMethod<[string, RenewalInput], boolean>,
 }
 export declare const idlService: IDL.ServiceClass;
 export declare const idlInitArgs: IDL.Type[];

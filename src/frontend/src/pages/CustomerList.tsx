@@ -37,8 +37,16 @@ function statusLabel(status: Status): string {
   return "Completed";
 }
 function formatDate(ts?: bigint): string {
-  if (!ts) return "\u2014";
-  return new Date(Number(ts)).toLocaleDateString("en-IN");
+  if (!ts || ts === 0n) return "—";
+  try {
+    const ms = Number(ts / 1_000_000n);
+    if (ms <= 0 || Number.isNaN(ms)) return "—";
+    const d = new Date(ms);
+    if (Number.isNaN(d.getTime())) return "—";
+    return d.toLocaleDateString("en-IN");
+  } catch {
+    return "—";
+  }
 }
 
 function exportToCSV(customers: CustomerRecord[]) {

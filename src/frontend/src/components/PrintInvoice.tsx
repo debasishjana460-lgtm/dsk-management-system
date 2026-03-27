@@ -1,5 +1,7 @@
+import html2canvas from "html2canvas";
 import { X } from "lucide-react";
 import { useRef } from "react";
+import { toast } from "sonner";
 import type { CustomerRecord, RenewalRecord } from "../backend";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
@@ -29,8 +31,8 @@ function printInNewWindow(invoiceEl: HTMLElement) {
   win.document.write(`
     <html><head>
     <style>
-      body { font-family: 'Courier New', Courier, monospace; font-size: 12px; max-width: 320px; margin: 0 auto; background: #fff; color: #111; padding: 12px 10px; }
-      @page { margin: 5mm; size: 80mm auto; }
+      @page { size: 80mm auto; margin: 2mm; }
+      body { font-family: 'Courier New', Courier, monospace; font-size: 12px; width: 76mm; margin: 0 auto; background: #fff; color: #111; padding: 4px; }
       img { max-width: 100%; }
     </style>
     </head><body>
@@ -68,11 +70,37 @@ export function PrintInvoice({
 
   const rupee = "\u20b9";
 
-  function handleShare() {
-    const phone = c.phone.replace(/\D/g, "");
-    const waText = `Invoice ${invoiceNo} from Document Seva Kendra. Customer: ${c.name}. Service: ${serviceName}. Amount: ${rupee}${total.toFixed(2)}. Balance: ${rupee}${balance.toFixed(2)}.`;
-    const waUrl = `https://wa.me/91${phone}?text=${encodeURIComponent(waText)}`;
-    window.open(waUrl, "_blank");
+  async function handleShare() {
+    if (!invoiceRef.current) return;
+    try {
+      const canvas = await html2canvas(invoiceRef.current, {
+        backgroundColor: "#ffffff",
+        scale: 2,
+        useCORS: true,
+      });
+      canvas.toBlob(async (blob) => {
+        if (!blob) return;
+        const file = new File([blob], "invoice.png", { type: "image/png" });
+        const phone = c.phone.replace(/\D/g, "");
+        if (navigator.canShare?.({ files: [file] })) {
+          await navigator.share({
+            files: [file],
+            title: `Invoice - ${c.name}`,
+          });
+        } else {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = "invoice.png";
+          a.click();
+          setTimeout(() => {
+            window.open(`https://wa.me/91${phone}`, "_blank");
+          }, 500);
+        }
+      }, "image/png");
+    } catch {
+      toast.error("Share failed");
+    }
   }
 
   // Absolute URL for logo so it works in print window
@@ -278,7 +306,7 @@ export function PrintInvoice({
           }}
           data-ocid="invoice.secondary_button"
         >
-          {"📲 Send to WhatsApp"}
+          {"📲 Share as Image"}
         </button>
         {onClose && (
           <button

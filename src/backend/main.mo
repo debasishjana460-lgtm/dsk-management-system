@@ -3,11 +3,10 @@ import Principal "mo:core/Principal";
 import Array "mo:core/Array";
 import Runtime "mo:core/Runtime";
 import Map "mo:core/Map";
-import MixinAuthorization "authorization/MixinAuthorization";
 import AccessControl "authorization/access-control";
-import MixinStorage "blob-storage/Mixin";
+import MixinAuthorization "authorization/MixinAuthorization";
 import Storage "blob-storage/Storage";
-
+import MixinStorage "blob-storage/Mixin";
 import Nat "mo:core/Nat";
 import Text "mo:core/Text";
 import Float "mo:core/Float";
@@ -15,31 +14,17 @@ import Int "mo:core/Int";
 import Order "mo:core/Order";
 import List "mo:core/List";
 
-
-
 actor {
   include MixinStorage();
 
   let accessControlState = AccessControl.initState();
   include MixinAuthorization(accessControlState);
 
-  // User Profile Type
   public type UserProfile = {
     name : Text;
   };
 
-  // Types
   type Status = { #pending; #in_process; #completed };
-
-  module Status {
-    public func toText(status : Status) : Text {
-      switch (status) {
-        case (#pending) { "pending" };
-        case (#in_process) { "in_process" };
-        case (#completed) { "completed" };
-      };
-    };
-  };
 
   type CustomerInput = {
     name : Text;
@@ -179,7 +164,7 @@ actor {
 
   module RenewalRecord {
     public func compare(renewal1 : RenewalRecord, renewal2 : RenewalRecord) : Order.Order {
-      Int.compare(renewal1.renewalDate, renewal2.renewalDate);
+      Int.compare(renewal2.renewalDate, renewal1.renewalDate);
     };
   };
 
@@ -205,11 +190,6 @@ actor {
   stable var expenseCount = 0;
   stable var docCount = 0;
   stable var renewalCount = 0;
-
-  // Helper: any logged-in (non-anonymous) user is allowed
-  func isAuthenticated(caller : Principal) : Bool {
-    not caller.isAnonymous();
-  };
 
   // Helper function to add leading zeros to a Nat
   func addLeadingZeros(number : Nat, totalDigits : Nat) : Text {
@@ -271,12 +251,12 @@ actor {
 
   // Always returns true for any authenticated caller
   public shared ({ caller }) func claimFirstAdmin() : async Bool {
-    isAuthenticated(caller);
+    not caller.isAnonymous();
   };
 
   public shared ({ caller }) func createCustomer(input : CustomerInput) : async Text {
-    if (not isAuthenticated(caller)) {
-      Runtime.trap("Please login first");
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can create customers");
     };
     let tokenId = generateTokenId();
     let now = currentTimestamp();
@@ -311,8 +291,8 @@ actor {
   };
 
   public shared ({ caller }) func updateCustomer(tokenId : Text, input : CustomerInput) : async Bool {
-    if (not isAuthenticated(caller)) {
-      Runtime.trap("Please login first");
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can update customers");
     };
     switch (customers.get(tokenId)) {
       case (null) { Runtime.trap("Customer not found") };
@@ -348,8 +328,8 @@ actor {
   };
 
   public query ({ caller }) func getCustomer(tokenId : Text) : async CustomerRecord {
-    if (not isAuthenticated(caller)) {
-      Runtime.trap("Please login first");
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can view customers");
     };
     switch (customers.get(tokenId)) {
       case (null) { Runtime.trap("Customer not found") };
@@ -358,22 +338,22 @@ actor {
   };
 
   public query ({ caller }) func listCustomers() : async [CustomerRecord] {
-    if (not isAuthenticated(caller)) {
-      Runtime.trap("Please login first");
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can list customers");
     };
     customers.values().toArray().sort();
   };
 
   public query ({ caller }) func listDeletedCustomers() : async [CustomerRecord] {
-    if (not isAuthenticated(caller)) {
-      Runtime.trap("Please login first");
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can list deleted customers");
     };
     customers.values().toArray().filter(func(c) { c.isDeleted }).sort();
   };
 
   public shared ({ caller }) func softDeleteCustomer(tokenId : Text) : async Bool {
-    if (not isAuthenticated(caller)) {
-      Runtime.trap("Please login first");
+    if (not (AccessControl.hasPermission(accessControlState, caller, #admin))) {
+      Runtime.trap("Unauthorized: Only admins can delete customers");
     };
     switch (customers.get(tokenId)) {
       case (null) { Runtime.trap("Customer not found") };
@@ -386,8 +366,8 @@ actor {
   };
 
   public shared ({ caller }) func restoreCustomer(tokenId : Text) : async Bool {
-    if (not isAuthenticated(caller)) {
-      Runtime.trap("Please login first");
+    if (not (AccessControl.hasPermission(accessControlState, caller, #admin))) {
+      Runtime.trap("Unauthorized: Only admins can restore customers");
     };
     switch (customers.get(tokenId)) {
       case (null) { Runtime.trap("Customer not found") };
@@ -400,8 +380,8 @@ actor {
   };
 
   public query ({ caller }) func getProfitSummary() : async ProfitSummary {
-    if (not isAuthenticated(caller)) {
-      Runtime.trap("Please login first");
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can view profit summary");
     };
     let now = currentTimestamp();
     let startOfToday = getStartOfDay(now);
@@ -442,8 +422,8 @@ actor {
   };
 
   public query ({ caller }) func getUpcomingRenewals(daysAhead : Nat) : async [CustomerRecord] {
-    if (not isAuthenticated(caller)) {
-      Runtime.trap("Please login first");
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can view upcoming renewals");
     };
     let now = currentTimestamp();
     let nanosPerDay = 86_400_000_000_000;
@@ -472,8 +452,8 @@ actor {
   };
 
   public shared ({ caller }) func addExpense(input : ExpenseInput) : async Text {
-    if (not isAuthenticated(caller)) {
-      Runtime.trap("Please login first");
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can add expenses");
     };
     expenseCount += 1;
     let id = "EXP-" # addLeadingZeros(expenseCount, 3);
@@ -493,15 +473,15 @@ actor {
   };
 
   public query ({ caller }) func listExpenses() : async [ExpenseRecord] {
-    if (not isAuthenticated(caller)) {
-      Runtime.trap("Please login first");
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can list expenses");
     };
     expenses.values().toArray().sort();
   };
 
   public query ({ caller }) func getExpenseSummary() : async ExpenseSummary {
-    if (not isAuthenticated(caller)) {
-      Runtime.trap("Please login first");
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can view expense summary");
     };
     let now = currentTimestamp();
     let startOfToday = getStartOfDay(now);
@@ -529,8 +509,8 @@ actor {
   };
 
   public shared ({ caller }) func deleteExpense(id : Text) : async Bool {
-    if (not isAuthenticated(caller)) {
-      Runtime.trap("Please login first");
+    if (not (AccessControl.hasPermission(accessControlState, caller, #admin))) {
+      Runtime.trap("Unauthorized: Only admins can delete expenses");
     };
     if (expenses.containsKey(id)) {
       expenses.remove(id);
@@ -541,8 +521,8 @@ actor {
   };
 
   public shared ({ caller }) func addDocumentLibraryItem(input : DocumentLibraryInput) : async Text {
-    if (not isAuthenticated(caller)) {
-      Runtime.trap("Please login first");
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can add document library items");
     };
     docCount += 1;
     let id = "DOC-" # addLeadingZeros(docCount, 3);
@@ -561,15 +541,15 @@ actor {
   };
 
   public query ({ caller }) func listDocumentLibraryItems() : async [DocumentLibraryItem] {
-    if (not isAuthenticated(caller)) {
-      Runtime.trap("Please login first");
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can list document library items");
     };
     documentLibrary.values().toArray().sort();
   };
 
   public shared ({ caller }) func deleteDocumentLibraryItem(id : Text) : async Bool {
-    if (not isAuthenticated(caller)) {
-      Runtime.trap("Please login first");
+    if (not (AccessControl.hasPermission(accessControlState, caller, #admin))) {
+      Runtime.trap("Unauthorized: Only admins can delete document library items");
     };
     if (documentLibrary.containsKey(id)) {
       documentLibrary.remove(id);
@@ -580,15 +560,15 @@ actor {
   };
 
   public query ({ caller }) func listCustomServices() : async [CustomServiceEntry] {
-    if (not isAuthenticated(caller)) {
-      Runtime.trap("Please login first");
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can list custom services");
     };
     customServices.values().toArray().sort();
   };
 
   public shared ({ caller }) func addCustomService(name : Text, category : Text) : async Bool {
-    if (not isAuthenticated(caller)) {
-      Runtime.trap("Please login first");
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can add custom services");
     };
     let now = currentTimestamp();
 
@@ -603,8 +583,8 @@ actor {
   };
 
   public shared ({ caller }) func addRenewalRecord(input : RenewalInput) : async Text {
-    if (not isAuthenticated(caller)) {
-      Runtime.trap("Please login first");
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can add renewal records");
     };
     // Validate customer exists
     switch (customers.get(input.customerId)) {
@@ -649,9 +629,55 @@ actor {
   };
 
   public query ({ caller }) func getCustomerRenewalHistory(customerId : Text) : async [RenewalRecord] {
-    if (not isAuthenticated(caller)) {
-      Runtime.trap("Please login first");
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can view renewal history");
     };
     renewalRecords.values().toArray().filter(func(r) { r.customerId == customerId }).sort();
+  };
+
+  public query ({ caller }) func getAllRenewalHistory() : async [RenewalRecord] {
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can view all renewal history");
+    };
+    renewalRecords.values().toArray().sort();
+  };
+
+  public shared ({ caller }) func deleteRenewalRecord(id : Text) : async Bool {
+    if (not (AccessControl.hasPermission(accessControlState, caller, #admin))) {
+      Runtime.trap("Unauthorized: Only admins can delete renewal records");
+    };
+    if (renewalRecords.containsKey(id)) {
+      renewalRecords.remove(id);
+      true;
+    } else {
+      false;
+    };
+  };
+
+  public shared ({ caller }) func updateRenewalRecord(id : Text, input : RenewalInput) : async Bool {
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can update renewal records");
+    };
+    switch (renewalRecords.get(id)) {
+      case (null) { false };
+      case (?existing) {
+        let totalCharged = input.govtFees + input.serviceCharge;
+        let balanceDue = totalCharged - input.advancePaid;
+        let updated : RenewalRecord = {
+          existing with
+          serviceName = input.serviceName;
+          renewalDate = input.renewalDate;
+          nextExpiryDate = input.nextExpiryDate;
+          govtFees = input.govtFees;
+          serviceCharge = input.serviceCharge;
+          totalCharged;
+          advancePaid = input.advancePaid;
+          balanceDue;
+          documentBlob = input.documentBlob;
+        };
+        renewalRecords.add(id, updated);
+        true;
+      };
+    };
   };
 };

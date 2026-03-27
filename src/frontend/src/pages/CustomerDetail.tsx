@@ -4,6 +4,7 @@ import {
   Download,
   Eye,
   FileText,
+  Loader2,
   MessageCircle,
   Pencil,
   Printer,
@@ -25,6 +26,15 @@ import {
   CardHeader,
   CardTitle,
 } from "../components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../components/ui/dialog";
+import { Input } from "../components/ui/input";
+import { Label } from "../components/ui/label";
 import { Skeleton } from "../components/ui/skeleton";
 import { useActor } from "../hooks/useActor";
 
@@ -48,6 +58,14 @@ function statusLabel(status: Status): string {
 function formatDate(ts?: bigint): string {
   if (!ts) return "\u2014";
   return new Date(Number(ts / 1_000_000n)).toLocaleDateString("en-IN");
+}
+
+function tsToDateStr(ts?: bigint): string {
+  if (!ts) return "";
+  return new Date(Number(ts / 1_000_000n)).toISOString().split("T")[0];
+}
+function dateStrToTs(s: string): bigint {
+  return BigInt(new Date(s).getTime()) * 1_000_000n;
 }
 
 async function downloadBlob(blob: ExternalBlob, name: string) {
@@ -95,7 +113,6 @@ async function shareBlob(blob: ExternalBlob, name: string) {
       url: blob.getDirectURL(),
     });
   } else {
-    // fallback: download
     const url = URL.createObjectURL(blobObj);
     const a = document.createElement("a");
     a.href = url;
@@ -103,6 +120,167 @@ async function shareBlob(blob: ExternalBlob, name: string) {
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
   }
+}
+
+/* ---- Edit Renewal Modal ---- */
+interface EditRenewalModalProps {
+  open: boolean;
+  onClose: () => void;
+  renewal: RenewalRecord;
+  customerId: string;
+  onSaved: () => void;
+}
+
+function EditRenewalModal({
+  open,
+  onClose,
+  renewal,
+  customerId,
+  onSaved,
+}: EditRenewalModalProps) {
+  const { actor } = useActor();
+  const [serviceName, setServiceName] = useState(renewal.serviceName);
+  const [renewalDate, setRenewalDate] = useState(
+    tsToDateStr(renewal.renewalDate),
+  );
+  const [nextExpiryDate, setNextExpiryDate] = useState(
+    tsToDateStr(renewal.nextExpiryDate),
+  );
+  const [govtFees, setGovtFees] = useState(String(renewal.govtFees));
+  const [serviceCharge, setServiceCharge] = useState(
+    String(renewal.serviceCharge),
+  );
+  const [advancePaid, setAdvancePaid] = useState(String(renewal.advancePaid));
+
+  const updateMut = useMutation({
+    mutationFn: async () => {
+      if (!actor) throw new Error("Not connected");
+      const input = {
+        customerId,
+        serviceName,
+        renewalDate: dateStrToTs(renewalDate),
+        nextExpiryDate: dateStrToTs(nextExpiryDate),
+        govtFees: Number.parseFloat(govtFees) || 0,
+        serviceCharge: Number.parseFloat(serviceCharge) || 0,
+        advancePaid: Number.parseFloat(advancePaid) || 0,
+        documentBlob: renewal.documentBlob,
+      };
+      return actor.updateRenewalRecord(renewal.id, input);
+    },
+    onSuccess: () => {
+      toast.success("Record updated");
+      onSaved();
+      onClose();
+    },
+    onError: () => toast.error("Update failed"),
+  });
+
+  const lbl = "block text-sm font-medium text-slate-300 mb-1";
+  const fieldCls =
+    "bg-slate-700 border-slate-600 text-white placeholder:text-slate-500";
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="bg-slate-800 border-slate-700 text-white max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="text-white">Edit Renewal Record</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          <div>
+            <Label className={lbl}>Service Name</Label>
+            <Input
+              value={serviceName}
+              onChange={(e) => setServiceName(e.target.value)}
+              className={fieldCls}
+              data-ocid="edit-renewal.input"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className={lbl}>Renewal Date</Label>
+              <Input
+                type="date"
+                value={renewalDate}
+                onChange={(e) => setRenewalDate(e.target.value)}
+                className={fieldCls}
+                data-ocid="edit-renewal.input"
+              />
+            </div>
+            <div>
+              <Label className={lbl}>Next Expiry</Label>
+              <Input
+                type="date"
+                value={nextExpiryDate}
+                onChange={(e) => setNextExpiryDate(e.target.value)}
+                className={fieldCls}
+                data-ocid="edit-renewal.input"
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <Label className={lbl}>Govt Fees</Label>
+              <Input
+                type="number"
+                step="0.01"
+                value={govtFees}
+                onChange={(e) => setGovtFees(e.target.value)}
+                className={fieldCls}
+                data-ocid="edit-renewal.input"
+              />
+            </div>
+            <div>
+              <Label className={lbl}>Service Charge</Label>
+              <Input
+                type="number"
+                step="0.01"
+                value={serviceCharge}
+                onChange={(e) => setServiceCharge(e.target.value)}
+                className={fieldCls}
+                data-ocid="edit-renewal.input"
+              />
+            </div>
+            <div>
+              <Label className={lbl}>Advance Paid</Label>
+              <Input
+                type="number"
+                step="0.01"
+                value={advancePaid}
+                onChange={(e) => setAdvancePaid(e.target.value)}
+                className={fieldCls}
+                data-ocid="edit-renewal.input"
+              />
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={onClose}
+            className="border-slate-600 text-slate-300 hover:bg-slate-700"
+            data-ocid="edit-renewal.cancel_button"
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={() => updateMut.mutate()}
+            disabled={updateMut.isPending}
+            className="bg-amber-500 hover:bg-amber-600 text-slate-900 font-semibold"
+            data-ocid="edit-renewal.save_button"
+          >
+            {updateMut.isPending ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                Saving...
+              </>
+            ) : (
+              "Save Changes"
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 export function CustomerDetail({ navigate, tokenId }: Props) {
@@ -115,6 +293,7 @@ export function CustomerDetail({ navigate, tokenId }: Props) {
   const [viewerBlob, setViewerBlob] = useState<ExternalBlob | null>(null);
   const [viewerName, setViewerName] = useState("");
   const [viewerOpen, setViewerOpen] = useState(false);
+  const [editRenewal, setEditRenewal] = useState<RenewalRecord | null>(null);
 
   const { data: c, isLoading } = useQuery({
     queryKey: ["customer", tokenId],
@@ -138,6 +317,16 @@ export function CustomerDetail({ navigate, tokenId }: Props) {
       navigate({ name: "customers" });
     },
     onError: () => toast.error("Failed to delete"),
+  });
+
+  const deleteRenewalMut = useMutation({
+    mutationFn: (id: string) => actor!.deleteRenewalRecord(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["renewal-history", tokenId] });
+      qc.invalidateQueries({ queryKey: ["all-renewals"] });
+      toast.success("Record deleted");
+    },
+    onError: () => toast.error("Delete failed"),
   });
 
   if (isLoading || !c) {
@@ -457,6 +646,7 @@ export function CustomerDetail({ navigate, tokenId }: Props) {
                     <th className="text-left p-3 font-medium">Balance</th>
                     <th className="text-left p-3 font-medium">Doc</th>
                     <th className="text-left p-3 font-medium">Invoice</th>
+                    <th className="text-left p-3 font-medium">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-700/50">
@@ -481,19 +671,19 @@ export function CustomerDetail({ navigate, tokenId }: Props) {
                         </div>
                       </td>
                       <td className="p-3 text-slate-300">
-                        {"₹"}
+                        {"\u20b9"}
                         {r.govtFees.toFixed(2)}
                       </td>
                       <td className="p-3 text-green-400">
-                        {"₹"}
+                        {"\u20b9"}
                         {r.serviceCharge.toFixed(2)}
                       </td>
                       <td className="p-3 text-amber-400 font-semibold">
-                        {"₹"}
+                        {"\u20b9"}
                         {r.totalCharged.toFixed(2)}
                       </td>
                       <td className="p-3 text-slate-300">
-                        {"₹"}
+                        {"\u20b9"}
                         {r.advancePaid.toFixed(2)}
                       </td>
                       <td
@@ -501,7 +691,7 @@ export function CustomerDetail({ navigate, tokenId }: Props) {
                           r.balanceDue > 0 ? "text-red-400" : "text-green-400"
                         }`}
                       >
-                        {"₹"}
+                        {"\u20b9"}
                         {r.balanceDue.toFixed(2)}
                       </td>
                       <td className="p-3">
@@ -588,6 +778,35 @@ export function CustomerDetail({ navigate, tokenId }: Props) {
                           <Printer className="h-3 w-3" />
                         </Button>
                       </td>
+                      <td className="p-3">
+                        <div className="flex gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-blue-400 hover:text-blue-300 h-6 px-2"
+                            onClick={() => setEditRenewal(r)}
+                            title="Edit"
+                            data-ocid={`renewal-history.edit_button.${idx + 1}`}
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-red-400 hover:text-red-300 h-6 px-2"
+                            disabled={deleteRenewalMut.isPending}
+                            onClick={() => {
+                              if (confirm("Delete this renewal record?")) {
+                                deleteRenewalMut.mutate(r.id);
+                              }
+                            }}
+                            title="Delete"
+                            data-ocid={`renewal-history.delete_button.${idx + 1}`}
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -616,6 +835,20 @@ export function CustomerDetail({ navigate, tokenId }: Props) {
         customer={c}
         renewal={printRenewal}
       />
+
+      {/* Edit Renewal Modal */}
+      {editRenewal && (
+        <EditRenewalModal
+          open={!!editRenewal}
+          onClose={() => setEditRenewal(null)}
+          renewal={editRenewal}
+          customerId={tokenId}
+          onSaved={() => {
+            qc.invalidateQueries({ queryKey: ["renewal-history", tokenId] });
+            qc.invalidateQueries({ queryKey: ["all-renewals"] });
+          }}
+        />
+      )}
 
       {/* Document Viewer */}
       <DocumentViewer
