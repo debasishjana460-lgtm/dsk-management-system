@@ -73,13 +73,18 @@ async function downloadBlob(blob: ExternalBlob, name: string) {
 }
 
 async function shareBlob(blob: ExternalBlob, name: string) {
-  const { bytes, mimeType, blobObj } = await downloadBlob(blob, name);
+  const bytes = await blob.getBytes();
+  let mimeType = "image/jpeg";
+  if (bytes[0] === 0x89 && bytes[1] === 0x50) mimeType = "image/png";
+  else if (bytes[0] === 0x25 && bytes[1] === 0x50) mimeType = "application/pdf";
+  else if (bytes[0] === 0xff && bytes[1] === 0xd8) mimeType = "image/jpeg";
   const ext =
     mimeType === "application/pdf"
       ? "pdf"
       : mimeType === "image/png"
         ? "png"
         : "jpg";
+  const blobObj = new Blob([bytes], { type: mimeType });
   const fileObj = new File([blobObj], `${name}.${ext}`, { type: mimeType });
   if (navigator.canShare?.({ files: [fileObj] })) {
     await navigator.share({ title: name, files: [fileObj] });
@@ -89,8 +94,15 @@ async function shareBlob(blob: ExternalBlob, name: string) {
       text: name,
       url: blob.getDirectURL(),
     });
+  } else {
+    // fallback: download
+    const url = URL.createObjectURL(blobObj);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${name}.${ext}`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
   }
-  void bytes;
 }
 
 export function CustomerDetail({ navigate, tokenId }: Props) {
@@ -108,12 +120,14 @@ export function CustomerDetail({ navigate, tokenId }: Props) {
     queryKey: ["customer", tokenId],
     queryFn: () => actor!.getCustomer(tokenId),
     enabled: !!actor,
+    staleTime: 2 * 60 * 1000,
   });
 
   const { data: renewalHistory, isLoading: historyLoading } = useQuery({
     queryKey: ["renewal-history", tokenId],
     queryFn: () => actor!.getCustomerRenewalHistory(tokenId),
     enabled: !!actor,
+    staleTime: 2 * 60 * 1000,
   });
 
   const deleteMut = useMutation({
@@ -335,9 +349,7 @@ export function CustomerDetail({ navigate, tokenId }: Props) {
       {c.documentBlobIds.length > 0 && (
         <Card className="bg-slate-800 border-slate-700">
           <CardHeader className="pb-2">
-            <CardTitle className="text-white text-sm">
-              Documents ({c.documentBlobIds.length})
-            </CardTitle>
+            <CardTitle className="text-white text-sm">Documents</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
             {c.documentBlobIds.map((blob, i) => {
@@ -369,13 +381,9 @@ export function CustomerDetail({ navigate, tokenId }: Props) {
                         setDocLoading(docKey);
                         try {
                           await downloadBlob(blob, `Document_${i + 1}`);
-                          toast.success(
-                            "\u09A1\u09BE\u0989\u09A8\u09B2\u09CB\u09A1 \u09B6\u09C1\u09B0\u09C1 \u09B9\u09AF\u09BC\u09C7\u099B\u09C7",
-                          );
+                          toast.success("Download started");
                         } catch {
-                          toast.error(
-                            "\u09A1\u09BE\u0989\u09A8\u09B2\u09CB\u09A1 \u09AC\u09CD\u09AF\u09B0\u09CD\u09A5 \u09B9\u09AF\u09BC\u09C7\u099B\u09C7",
-                          );
+                          toast.error("Download failed");
                         } finally {
                           setDocLoading(null);
                         }
@@ -395,9 +403,7 @@ export function CustomerDetail({ navigate, tokenId }: Props) {
                           await shareBlob(blob, `Document_${i + 1}`);
                         } catch (e: unknown) {
                           if (e instanceof Error && e.name !== "AbortError") {
-                            toast.error(
-                              "\u09B6\u09C7\u09AF\u09BC\u09BE\u09B0 \u09AC\u09CD\u09AF\u09B0\u09CD\u09A5 \u09B9\u09AF\u09BC\u09C7\u099B\u09C7",
-                            );
+                            toast.error("Share failed");
                           }
                         } finally {
                           setDocLoading(null);
@@ -526,13 +532,9 @@ export function CustomerDetail({ navigate, tokenId }: Props) {
                                     r.documentBlob!,
                                     `${r.serviceName}_renewal`,
                                   );
-                                  toast.success(
-                                    "\u09A1\u09BE\u0989\u09A8\u09B2\u09CB\u09A1 \u09B6\u09C1\u09B0\u09C1 \u09B9\u09AF\u09BC\u09C7\u099B\u09C7",
-                                  );
+                                  toast.success("Download started");
                                 } catch {
-                                  toast.error(
-                                    "\u09A1\u09BE\u0989\u09A8\u09B2\u09CB\u09A1 \u09AC\u09CD\u09AF\u09B0\u09CD\u09A5",
-                                  );
+                                  toast.error("Download failed");
                                 } finally {
                                   setDocLoading(null);
                                 }
@@ -557,9 +559,7 @@ export function CustomerDetail({ navigate, tokenId }: Props) {
                                     e instanceof Error &&
                                     e.name !== "AbortError"
                                   ) {
-                                    toast.error(
-                                      "\u09B6\u09C7\u09AF\u09BC\u09BE\u09B0 \u09AC\u09CD\u09AF\u09B0\u09CD\u09A5",
-                                    );
+                                    toast.error("Share failed");
                                   }
                                 } finally {
                                   setDocLoading(null);

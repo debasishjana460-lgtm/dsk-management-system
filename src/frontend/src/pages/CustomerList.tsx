@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Download,
   Eye,
   MessageCircle,
   Pencil,
@@ -40,6 +41,57 @@ function formatDate(ts?: bigint): string {
   return new Date(Number(ts)).toLocaleDateString("en-IN");
 }
 
+function exportToCSV(customers: CustomerRecord[]) {
+  const headers = [
+    "Token ID",
+    "Name",
+    "Phone",
+    "Service Category",
+    "Service Type",
+    "Application No",
+    "Status",
+    "Application Date",
+    "Delivery Date",
+    "Expiry Date",
+    "Total Charged",
+    "Govt Fees",
+    "Net Profit",
+    "Advance Paid",
+    "Balance Due",
+    "Notes",
+  ];
+  function fmtDate(ts?: bigint): string {
+    if (!ts) return "";
+    return new Date(Number(ts / 1_000_000n)).toLocaleDateString("en-IN");
+  }
+  const rows = customers.map((c) => [
+    c.tokenId,
+    c.name,
+    c.phone,
+    c.serviceCategory,
+    c.serviceType,
+    c.applicationNo ?? "",
+    c.currentStatus,
+    fmtDate(c.applicationDate),
+    fmtDate(c.deliveryDate),
+    fmtDate(c.expiryDate),
+    c.totalCharged,
+    c.govtFees,
+    c.netProfit,
+    c.advancePaid,
+    c.balanceDue,
+    (c.notes ?? "").replace(/,/g, ";"),
+  ]);
+  const csv = [headers, ...rows].map((r) => r.join(",")).join("\n");
+  const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `DSK_Customers_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
 export function CustomerList({ navigate }: Props) {
   const { actor } = useActor();
   const qc = useQueryClient();
@@ -53,6 +105,7 @@ export function CustomerList({ navigate }: Props) {
     queryKey: ["customers"],
     queryFn: () => actor!.listCustomers(),
     enabled: !!actor,
+    staleTime: 2 * 60 * 1000,
   });
 
   const deleteMut = useMutation({
@@ -90,13 +143,25 @@ export function CustomerList({ navigate }: Props) {
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-white">Customers</h1>
-        <Button
-          onClick={() => navigate({ name: "customer-add" })}
-          className="bg-amber-500 hover:bg-amber-600 text-slate-900 font-semibold"
-          data-ocid="customers.primary_button"
-        >
-          <Plus className="h-4 w-4 mr-1" /> Add Customer
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="border-slate-600 text-slate-300 hover:bg-slate-700"
+            onClick={() => exportToCSV(active)}
+            title="Export to CSV"
+            data-ocid="customers.secondary_button"
+          >
+            <Download className="h-4 w-4 mr-1" /> Export CSV
+          </Button>
+          <Button
+            onClick={() => navigate({ name: "customer-add" })}
+            className="bg-amber-500 hover:bg-amber-600 text-slate-900 font-semibold"
+            data-ocid="customers.primary_button"
+          >
+            <Plus className="h-4 w-4 mr-1" /> Add Customer
+          </Button>
+        </div>
       </div>
 
       <div className="flex gap-3 flex-wrap">
@@ -227,16 +292,18 @@ export function CustomerList({ navigate }: Props) {
                           >
                             <Pencil className="h-3.5 w-3.5" />
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            title="Renew"
-                            className="h-7 w-7 text-slate-400 hover:text-amber-400"
-                            onClick={() => setRenewCustomer(c)}
-                            data-ocid={`customers.open_modal_button.${idx + 1}`}
-                          >
-                            <RefreshCw className="h-3.5 w-3.5" />
-                          </Button>
+                          {c.expiryDate ? (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="Renew"
+                              className="h-7 w-7 text-slate-400 hover:text-amber-400"
+                              onClick={() => setRenewCustomer(c)}
+                              data-ocid={`customers.open_modal_button.${idx + 1}`}
+                            >
+                              <RefreshCw className="h-3.5 w-3.5" />
+                            </Button>
+                          ) : null}
                           <Button
                             variant="ghost"
                             size="icon"

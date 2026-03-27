@@ -57,18 +57,21 @@ export function Dashboard({ navigate }: Props) {
     queryKey: ["profit-summary"],
     queryFn: () => actor!.getProfitSummary(),
     enabled: !!actor,
+    staleTime: 2 * 60 * 1000,
   });
 
   const { data: customers, isLoading: loadingCustomers } = useQuery({
     queryKey: ["customers"],
     queryFn: () => actor!.listCustomers(),
     enabled: !!actor,
+    staleTime: 2 * 60 * 1000,
   });
 
   const { data: renewals, isLoading: loadingRenewals } = useQuery({
     queryKey: ["renewals-30"],
     queryFn: () => actor!.getUpcomingRenewals(BigInt(30)),
     enabled: !!actor,
+    staleTime: 2 * 60 * 1000,
   });
 
   const activeCustomers = customers?.filter((c) => !c.isDeleted) ?? [];

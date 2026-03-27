@@ -1,11 +1,10 @@
-import html2canvas from "html2canvas";
 import { X } from "lucide-react";
-import { useRef, useState } from "react";
+import { useRef } from "react";
 import type { CustomerRecord, RenewalRecord } from "../backend";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
 
-const DSK_LOGO = "/assets/uploads/Picsart_25-08-06_00-27-29-094-1.png";
+const DSK_LOGO = "/assets/uploads/dsk-logo-new.png";
 
 interface PrintInvoiceProps {
   customer: CustomerRecord;
@@ -46,44 +45,12 @@ function printInNewWindow(invoiceEl: HTMLElement) {
   }, 500);
 }
 
-async function shareAsImage(invoiceEl: HTMLElement, invoiceNo: string) {
-  const canvas = await html2canvas(invoiceEl, {
-    backgroundColor: "#ffffff",
-    scale: 2,
-    useCORS: true,
-  });
-  return new Promise<void>((resolve) => {
-    canvas.toBlob(async (blob) => {
-      if (!blob) {
-        resolve();
-        return;
-      }
-      const file = new File([blob], `Invoice_${invoiceNo}.png`, {
-        type: "image/png",
-      });
-      if (navigator.canShare?.({ files: [file] })) {
-        await navigator.share({ title: `Invoice ${invoiceNo}`, files: [file] });
-      } else {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `Invoice_${invoiceNo}.png`;
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(url), 5000);
-      }
-      resolve();
-    }, "image/png");
-  });
-}
-
 export function PrintInvoice({
   customer: c,
   renewal,
   onClose,
 }: PrintInvoiceProps) {
   const invoiceRef = useRef<HTMLDivElement>(null);
-  const [sharing, setSharing] = useState(false);
-
   const today = new Date().toLocaleDateString("en-IN");
   const invoiceNo = `DSK-INV-${c.tokenId}-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=${encodeURIComponent(c.tokenId)}`;
@@ -101,19 +68,15 @@ export function PrintInvoice({
 
   const rupee = "\u20b9";
 
-  async function handleShare() {
-    if (!invoiceRef.current) return;
-    setSharing(true);
-    try {
-      await shareAsImage(invoiceRef.current, invoiceNo);
-    } catch (e: unknown) {
-      if (e instanceof Error && e.name !== "AbortError") {
-        console.error("Share failed", e);
-      }
-    } finally {
-      setSharing(false);
-    }
+  function handleShare() {
+    const phone = c.phone.replace(/\D/g, "");
+    const waText = `Invoice ${invoiceNo} from Document Seva Kendra. Customer: ${c.name}. Service: ${serviceName}. Amount: ${rupee}${total.toFixed(2)}. Balance: ${rupee}${balance.toFixed(2)}.`;
+    const waUrl = `https://wa.me/91${phone}?text=${encodeURIComponent(waText)}`;
+    window.open(waUrl, "_blank");
   }
+
+  // Absolute URL for logo so it works in print window
+  const logoAbsUrl = window.location.origin + DSK_LOGO;
 
   return (
     <div>
@@ -132,7 +95,7 @@ export function PrintInvoice({
       >
         <div style={{ textAlign: "center", marginBottom: 8 }}>
           <img
-            src={DSK_LOGO}
+            src={logoAbsUrl}
             alt="DSK Logo"
             style={{
               height: 60,
@@ -295,19 +258,18 @@ export function PrintInvoice({
           }}
           data-ocid="invoice.primary_button"
         >
-          🖨 Print Invoice
+          🖨️ Print / Save PDF
         </button>
         <button
           type="button"
           onClick={handleShare}
-          disabled={sharing}
           style={{
-            background: sharing ? "#6b7280" : "#2563eb",
+            background: "#25D366",
             color: "#fff",
             border: "none",
             borderRadius: 6,
             padding: "8px 16px",
-            cursor: sharing ? "not-allowed" : "pointer",
+            cursor: "pointer",
             fontSize: 13,
             fontWeight: "bold",
             display: "inline-flex",
@@ -316,7 +278,7 @@ export function PrintInvoice({
           }}
           data-ocid="invoice.secondary_button"
         >
-          {sharing ? "⏳ Capturing..." : "📤 Share as Image"}
+          {"📲 Send to WhatsApp"}
         </button>
         {onClose && (
           <button

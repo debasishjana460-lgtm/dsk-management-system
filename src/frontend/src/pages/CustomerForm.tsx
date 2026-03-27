@@ -98,12 +98,14 @@ export function CustomerForm({ navigate, tokenId }: Props) {
     queryKey: ["customer", tokenId],
     queryFn: () => actor!.getCustomer(tokenId!),
     enabled: !!actor && !!tokenId,
+    staleTime: 2 * 60 * 1000,
   });
 
   const { data: customServices } = useQuery({
     queryKey: ["custom-services"],
     queryFn: () => actor!.listCustomServices(),
     enabled: !!actor,
+    staleTime: 2 * 60 * 1000,
   });
 
   const [name, setName] = useState("");
@@ -111,6 +113,8 @@ export function CustomerForm({ navigate, tokenId }: Props) {
   const [serviceCategory, setServiceCategory] = useState(
     "Business Registration",
   );
+  const [isCustomCategory, setIsCustomCategory] = useState(false);
+  const [customCategoryName, setCustomCategoryName] = useState("");
   const [serviceType, setServiceType] = useState("");
   const [customServiceName, setCustomServiceName] = useState("");
   const [isCustom, setIsCustom] = useState(false);
@@ -128,6 +132,8 @@ export function CustomerForm({ navigate, tokenId }: Props) {
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
 
+  const isCompleted = status === Status.completed;
+
   const netProfit =
     (Number.parseFloat(totalCharged) || 0) - (Number.parseFloat(govtFees) || 0);
   const balanceDue =
@@ -138,7 +144,16 @@ export function CustomerForm({ navigate, tokenId }: Props) {
     if (existing) {
       setName(existing.name);
       setPhone(existing.phone);
-      setServiceCategory(existing.serviceCategory);
+      // Check if the category is a known one or custom
+      if (existing.serviceCategory in SERVICE_CATEGORIES) {
+        setServiceCategory(existing.serviceCategory);
+        setIsCustomCategory(false);
+        setCustomCategoryName("");
+      } else {
+        setIsCustomCategory(true);
+        setCustomCategoryName(existing.serviceCategory);
+        setServiceCategory(existing.serviceCategory);
+      }
       if (existing.customServiceName) {
         setIsCustom(true);
         setServiceType("__custom__");
@@ -177,18 +192,21 @@ export function CustomerForm({ navigate, tokenId }: Props) {
       const finalServiceType = isCustom
         ? customServiceName || "Custom Service"
         : serviceType;
+      const finalCategory = isCustomCategory
+        ? customCategoryName || "Other"
+        : serviceCategory;
       const input = {
         name,
         phone,
-        serviceCategory,
+        serviceCategory: finalCategory,
         serviceType: finalServiceType,
         customServiceName: isCustom ? customServiceName : undefined,
         applicationNo: applicationNo || undefined,
         applicationDate:
           BigInt(new Date(applicationDate).getTime()) * 1_000_000n,
         currentStatus: status,
-        deliveryDate: dateToTs(deliveryDate),
-        expiryDate: dateToTs(expiryDate),
+        deliveryDate: isCompleted ? dateToTs(deliveryDate) : undefined,
+        expiryDate: isCompleted ? dateToTs(expiryDate) : undefined,
         totalCharged: Number.parseFloat(totalCharged) || 0,
         govtFees: Number.parseFloat(govtFees) || 0,
         advancePaid: Number.parseFloat(advancePaid) || 0,
@@ -198,7 +216,7 @@ export function CustomerForm({ navigate, tokenId }: Props) {
 
       if (isCustom && customServiceName) {
         try {
-          await actor.addCustomService(customServiceName, serviceCategory);
+          await actor.addCustomService(customServiceName, finalCategory);
         } catch {
           // ignore duplicate
         }
@@ -238,8 +256,7 @@ export function CustomerForm({ navigate, tokenId }: Props) {
   }
 
   const isConnecting = isFetching && !actor;
-  const isSubmitDisabled =
-    saveMut.isPending || uploading || !actor || isFetching;
+  const isSubmitDisabled = saveMut.isPending || uploading || !actor;
 
   return (
     <div className="space-y-5 max-w-2xl">
@@ -326,19 +343,46 @@ export function CustomerForm({ navigate, tokenId }: Props) {
             <div>
               <p className={lbl}>Service Category *</p>
               <select
-                value={serviceCategory}
+                value={isCustomCategory ? "__custom_cat__" : serviceCategory}
                 onChange={(e) => {
-                  setServiceCategory(e.target.value);
-                  setServiceType("");
-                  setIsCustom(false);
+                  const v = e.target.value;
+                  if (v === "__custom_cat__") {
+                    setIsCustomCategory(true);
+                    setServiceCategory("");
+                    setCustomCategoryName("");
+                  } else {
+                    setIsCustomCategory(false);
+                    setCustomCategoryName("");
+                    setServiceCategory(v);
+                    setServiceType("");
+                    setIsCustom(false);
+                  }
                 }}
                 className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-md text-white text-sm"
                 data-ocid="customer.select"
               >
                 {Object.keys(SERVICE_CATEGORIES).map((cat) => (
-                  <option key={cat}>{cat}</option>
+                  <option key={cat} value={cat}>
+                    {cat}
+                  </option>
                 ))}
+                <option value="__custom_cat__">Other (Custom)</option>
               </select>
+              {isCustomCategory && (
+                <div className="mt-2">
+                  <Input
+                    value={customCategoryName}
+                    onChange={(e) => {
+                      setCustomCategoryName(e.target.value);
+                      setServiceCategory(e.target.value);
+                    }}
+                    required
+                    className={fieldCls}
+                    placeholder="Enter custom category name"
+                    data-ocid="customer.input"
+                  />
+                </div>
+              )}
             </div>
             <div>
               <p className={lbl}>Service Type *</p>
@@ -390,7 +434,14 @@ export function CustomerForm({ navigate, tokenId }: Props) {
               <p className={lbl}>Status</p>
               <select
                 value={status}
-                onChange={(e) => setStatus(e.target.value as Status)}
+                onChange={(e) => {
+                  const newStatus = e.target.value as Status;
+                  setStatus(newStatus);
+                  if (newStatus !== Status.completed) {
+                    setDeliveryDate("");
+                    setExpiryDate("");
+                  }
+                }}
                 className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-md text-white text-sm"
                 data-ocid="customer.select"
               >
@@ -415,8 +466,14 @@ export function CustomerForm({ navigate, tokenId }: Props) {
                   type="date"
                   value={deliveryDate}
                   onChange={(e) => setDeliveryDate(e.target.value)}
-                  className={fieldCls}
+                  disabled={!isCompleted}
+                  className={`${fieldCls}${!isCompleted ? " opacity-50 cursor-not-allowed" : ""}`}
                 />
+                {!isCompleted && (
+                  <p className="text-xs text-slate-500 mt-1">
+                    Available when Completed
+                  </p>
+                )}
               </div>
               <div>
                 <p className={lbl}>Expiry / Renewal</p>
@@ -424,8 +481,14 @@ export function CustomerForm({ navigate, tokenId }: Props) {
                   type="date"
                   value={expiryDate}
                   onChange={(e) => setExpiryDate(e.target.value)}
-                  className={fieldCls}
+                  disabled={!isCompleted}
+                  className={`${fieldCls}${!isCompleted ? " opacity-50 cursor-not-allowed" : ""}`}
                 />
+                {!isCompleted && (
+                  <p className="text-xs text-slate-500 mt-1">
+                    Available when Completed
+                  </p>
+                )}
               </div>
             </div>
           </CardContent>
@@ -571,7 +634,7 @@ export function CustomerForm({ navigate, tokenId }: Props) {
                 <Loader2 className="h-4 w-4 animate-spin mr-2" />
                 Saving...
               </>
-            ) : isFetching && !actor ? (
+            ) : !actor ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin mr-2" />
                 Connecting...

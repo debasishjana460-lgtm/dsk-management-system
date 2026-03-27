@@ -37,6 +37,7 @@ export function Renewals({ navigate }: Props) {
     queryKey: ["customers"],
     queryFn: () => actor!.listCustomers(),
     enabled: !!actor,
+    staleTime: 2 * 60 * 1000,
   });
 
   const withExpiry = (customers ?? [])

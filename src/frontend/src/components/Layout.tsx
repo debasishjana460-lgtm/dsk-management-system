@@ -64,7 +64,7 @@ export function Layout({
         )}
         <div>
           <div className="font-bold text-white text-sm">DSK</div>
-          <div className="text-xs text-slate-400">Seva Kendra</div>
+          <div className="text-xs text-slate-400">Document Seva Kendra</div>
         </div>
       </div>
       <nav className="flex-1 p-3 space-y-1">
