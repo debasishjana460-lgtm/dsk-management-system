@@ -256,7 +256,7 @@ export function CustomerForm({ navigate, tokenId }: Props) {
   }
 
   const isConnecting = isFetching && !actor;
-  const isSubmitDisabled = saveMut.isPending || uploading;
+  const isSubmitDisabled = saveMut.isPending || uploading || !actor;
 
   return (
     <div className="space-y-5 max-w-2xl">

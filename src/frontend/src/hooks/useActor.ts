@@ -28,11 +28,22 @@ export function useActor() {
       const actor = await createActorWithConfig(actorOptions);
       const adminToken = getSecretParameter("caffeineAdminToken") || "";
       await actor._initializeAccessControlWithSecret(adminToken);
+
+      // Always claim first admin so the logged-in user has permissions
+      // This is safe to call repeatedly - it's a no-op if admin already exists
+      try {
+        await actor.claimFirstAdmin();
+      } catch {
+        // Ignore errors - admin may already be claimed
+      }
+
       return actor;
     },
     // Only refetch when identity changes
     staleTime: Number.POSITIVE_INFINITY,
-    // This will cause the actor to be recreated when the identity changes
+    // Retry up to 3 times if the actor fails to load
+    retry: 3,
+    retryDelay: 1000,
     enabled: true,
   });
 
@@ -55,5 +66,6 @@ export function useActor() {
   return {
     actor: actorQuery.data || null,
     isFetching: actorQuery.isFetching,
+    isError: actorQuery.isError,
   };
 }
