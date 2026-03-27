@@ -57,8 +57,6 @@ export function PrintInvoice({
   const invoiceNo = `DSK-INV-${c.tokenId}-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=${encodeURIComponent(c.tokenId)}`;
 
-  const govtFees = renewal ? renewal.govtFees : c.govtFees;
-  const serviceCharge = renewal ? renewal.serviceCharge : c.netProfit;
   const total = renewal ? renewal.totalCharged : c.totalCharged;
   const advance = renewal ? renewal.advancePaid : c.advancePaid;
   const balance = renewal ? renewal.balanceDue : c.balanceDue;
@@ -72,34 +70,57 @@ export function PrintInvoice({
 
   async function handleShare() {
     if (!invoiceRef.current) return;
+    const phone = c.phone.replace(/\D/g, "");
     try {
       const canvas = await html2canvas(invoiceRef.current, {
         backgroundColor: "#ffffff",
         scale: 2,
         useCORS: true,
+        allowTaint: true,
+        imageTimeout: 15000,
+        logging: false,
       });
       canvas.toBlob(async (blob) => {
-        if (!blob) return;
+        if (!blob) {
+          window.open(`https://wa.me/91${phone}`, "_blank");
+          return;
+        }
         const file = new File([blob], "invoice.png", { type: "image/png" });
-        const phone = c.phone.replace(/\D/g, "");
-        if (navigator.canShare?.({ files: [file] })) {
-          await navigator.share({
-            files: [file],
-            title: `Invoice - ${c.name}`,
-          });
-        } else {
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = "invoice.png";
-          a.click();
-          setTimeout(() => {
-            window.open(`https://wa.me/91${phone}`, "_blank");
-          }, 500);
+        try {
+          if (navigator.canShare?.({ files: [file] })) {
+            await navigator.share({
+              files: [file],
+              title: `Invoice - ${c.name}`,
+            });
+          } else {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "invoice.png";
+            a.click();
+            setTimeout(() => {
+              URL.revokeObjectURL(url);
+              window.open(`https://wa.me/91${phone}`, "_blank");
+            }, 1000);
+          }
+        } catch (shareErr: unknown) {
+          if (shareErr instanceof Error && shareErr.name !== "AbortError") {
+            // Fallback: download and open WhatsApp
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "invoice.png";
+            a.click();
+            setTimeout(() => {
+              URL.revokeObjectURL(url);
+              window.open(`https://wa.me/91${phone}`, "_blank");
+            }, 1000);
+          }
         }
       }, "image/png");
     } catch {
-      toast.error("Share failed");
+      // html2canvas failed — fallback to WhatsApp
+      window.open(`https://wa.me/91${phone}`, "_blank");
     }
   }
 
@@ -132,6 +153,7 @@ export function PrintInvoice({
               margin: "0 auto",
               display: "block",
             }}
+            crossOrigin="anonymous"
             onError={(e) => {
               (e.target as HTMLImageElement).style.display = "none";
             }}
@@ -169,7 +191,25 @@ export function PrintInvoice({
           <InvRow label="Name" value={c.name} />
           <InvRow label="Token ID" value={c.tokenId} />
           <InvRow label="Phone" value={c.phone} />
-          <InvRow label="Service" value={serviceName} />
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              marginBottom: 1,
+            }}
+          >
+            <span>Service:</span>
+            <span style={{ textAlign: "right" }}>
+              <div>{serviceName}</div>
+              {renewal && (
+                <div
+                  style={{ fontSize: 10, color: "#888", fontStyle: "italic" }}
+                >
+                  Renewal
+                </div>
+              )}
+            </span>
+          </div>
           {c.applicationNo && <InvRow label="App No" value={c.applicationNo} />}
         </div>
 
@@ -179,11 +219,6 @@ export function PrintInvoice({
           <div style={{ fontWeight: "bold", marginBottom: 3, fontSize: 12 }}>
             PAYMENT DETAILS
           </div>
-          <InvRow label="Govt Fees" value={`${rupee}${govtFees.toFixed(2)}`} />
-          <InvRow
-            label="Service Charge"
-            value={`${rupee}${serviceCharge.toFixed(2)}`}
-          />
           <div style={{ borderTop: "1px solid #333", margin: "3px 0" }} />
           <div
             style={{
@@ -286,7 +321,7 @@ export function PrintInvoice({
           }}
           data-ocid="invoice.primary_button"
         >
-          🖨️ Print / Save PDF
+          {"\uD83D\uDDB8"} Print / Save PDF
         </button>
         <button
           type="button"
@@ -306,7 +341,7 @@ export function PrintInvoice({
           }}
           data-ocid="invoice.secondary_button"
         >
-          {"📲 Share as Image"}
+          {"\uD83D\uDCF2 Share as Image"}
         </button>
         {onClose && (
           <button

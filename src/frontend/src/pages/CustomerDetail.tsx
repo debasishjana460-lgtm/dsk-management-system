@@ -320,13 +320,21 @@ export function CustomerDetail({ navigate, tokenId }: Props) {
   });
 
   const deleteRenewalMut = useMutation({
-    mutationFn: (id: string) => actor!.deleteRenewalRecord(id),
+    mutationFn: async (id: string) => {
+      if (!actor) throw new Error("Not connected");
+      const result = await actor.deleteRenewalRecord(id);
+      if (!result) throw new Error("Record not found");
+      return result;
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["renewal-history", tokenId] });
       qc.invalidateQueries({ queryKey: ["all-renewals"] });
       toast.success("Record deleted");
     },
-    onError: () => toast.error("Delete failed"),
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : "Delete failed";
+      toast.error(msg);
+    },
   });
 
   if (isLoading || !c) {
@@ -663,6 +671,9 @@ export function CustomerDetail({ navigate, tokenId }: Props) {
                       </td>
                       <td className="p-3">
                         <div className="text-white">{r.serviceName}</div>
+                        <div className="text-amber-500 text-xs font-medium">
+                          Renewal
+                        </div>
                         <div className="text-slate-500">
                           Next:{" "}
                           {new Date(

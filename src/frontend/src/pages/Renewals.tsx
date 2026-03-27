@@ -296,8 +296,13 @@ export function Renewals({ navigate }: Props) {
                             <td className="p-3 text-amber-400 font-mono">
                               {r.customerId}
                             </td>
-                            <td className="p-3 text-slate-300">
-                              {r.serviceName}
+                            <td className="p-3">
+                              <div className="text-slate-300">
+                                {r.serviceName}
+                              </div>
+                              <div className="text-amber-500 text-xs font-medium">
+                                Renewal
+                              </div>
                             </td>
                             <td className="p-3 text-slate-300">
                               ₹{r.govtFees.toFixed(2)}
