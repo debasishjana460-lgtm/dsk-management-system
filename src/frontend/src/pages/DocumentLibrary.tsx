@@ -1,7 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ChevronDown,
+  ChevronRight,
   Download,
   FileText,
+  Folder,
+  FolderOpen,
   Loader2,
   Plus,
   Share2,
@@ -35,6 +39,13 @@ interface PreviewState {
   bytes: Uint8Array;
 }
 
+interface DocItem {
+  id: string;
+  serviceName: string;
+  description?: string;
+  blob: ExternalBlob;
+}
+
 function parseDocDescription(desc?: string): {
   category: string;
   note: string;
@@ -55,6 +66,7 @@ export function DocumentLibrary({ navigate: _ }: Props) {
   const [preview, setPreview] = useState<PreviewState | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [sharingId, setSharingId] = useState<string | null>(null);
+  const [openFolders, setOpenFolders] = useState<Set<string>>(new Set());
 
   const { data: items, isLoading } = useQuery({
     queryKey: ["doc-library"],
@@ -93,6 +105,10 @@ export function DocumentLibrary({ navigate: _ }: Props) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["doc-library"] });
       toast.success("Document uploaded successfully");
+      // Auto-open the new folder
+      if (category) {
+        setOpenFolders((prev) => new Set(prev).add(category));
+      }
       setServiceName("");
       setDescription("");
       setCategory("");
@@ -150,11 +166,7 @@ export function DocumentLibrary({ navigate: _ }: Props) {
     return "jpg";
   }
 
-  async function handleView(item: {
-    id: string;
-    serviceName: string;
-    blob: ExternalBlob;
-  }) {
+  async function handleView(item: DocItem) {
     setLoadingId(item.id);
     try {
       const { bytes, mimeType, objectUrl } = await loadBlobBytes(item.blob);
@@ -166,11 +178,7 @@ export function DocumentLibrary({ navigate: _ }: Props) {
     }
   }
 
-  async function handleShare(item: {
-    id: string;
-    serviceName: string;
-    blob: ExternalBlob;
-  }) {
+  async function handleShare(item: DocItem) {
     setSharingId(item.id);
     try {
       const { bytes, mimeType } = await loadBlobBytes(item.blob);
@@ -220,6 +228,26 @@ export function DocumentLibrary({ navigate: _ }: Props) {
     setPreview(null);
   }
 
+  function toggleFolder(cat: string) {
+    setOpenFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(cat)) next.delete(cat);
+      else next.add(cat);
+      return next;
+    });
+  }
+
+  // Group items by category
+  const allItems = (items ?? []) as DocItem[];
+  const grouped = new Map<string, DocItem[]>();
+  for (const item of allItems) {
+    const descStr = item.description ? String(item.description) : undefined;
+    const { category: cat } = parseDocDescription(descStr);
+    const key = cat || "Uncategorized";
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key)!.push(item);
+  }
+
   return (
     <div className="space-y-5">
       <h1 className="text-2xl font-bold text-white">Document Library</h1>
@@ -241,7 +269,9 @@ export function DocumentLibrary({ navigate: _ }: Props) {
           >
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <p className="text-sm text-slate-300 mb-1">Category</p>
+                <p className="text-sm text-slate-300 mb-1">
+                  Category (Folder Name)
+                </p>
                 <Input
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
@@ -314,95 +344,124 @@ export function DocumentLibrary({ navigate: _ }: Props) {
         </CardContent>
       </Card>
 
-      {/* Document List */}
+      {/* Folder / Document List */}
       {isLoading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="space-y-3">
           {[1, 2, 3].map((i) => (
-            <Skeleton key={i} className="h-36" />
+            <Skeleton key={i} className="h-14" />
           ))}
         </div>
-      ) : (items ?? []).length === 0 ? (
+      ) : allItems.length === 0 ? (
         <div className="text-center py-12 text-slate-400">
           No documents uploaded yet.
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {(items ?? []).map((item) => {
-            const descStr = item.description
-              ? String(item.description)
-              : undefined;
-            const { category: itemCat, note } = parseDocDescription(descStr);
+        <div className="space-y-3">
+          {Array.from(grouped.entries()).map(([folderName, folderItems]) => {
+            const isOpen = openFolders.has(folderName);
             return (
-              <Card
-                key={item.id}
-                className="bg-slate-800 border-slate-700 hover:border-slate-500 transition-colors"
+              <div
+                key={folderName}
+                className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden"
               >
-                <CardContent className="p-4">
-                  <div className="flex items-start justify-between">
-                    <div className="bg-amber-500/10 rounded-lg p-2">
-                      <FileText className="h-6 w-6 text-amber-400" />
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-slate-500 hover:text-red-400"
-                      onClick={() => {
-                        if (confirm("Delete this document?"))
-                          deleteMut.mutate(item.id);
-                      }}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
+                {/* Folder Header */}
+                <button
+                  type="button"
+                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-700/50 transition-colors text-left"
+                  onClick={() => toggleFolder(folderName)}
+                >
+                  {isOpen ? (
+                    <FolderOpen className="h-5 w-5 text-amber-400 flex-shrink-0" />
+                  ) : (
+                    <Folder className="h-5 w-5 text-amber-400 flex-shrink-0" />
+                  )}
+                  <span className="text-white font-semibold flex-1">
+                    {folderName}
+                  </span>
+                  <span className="text-xs text-slate-400 mr-2">
+                    {folderItems.length}{" "}
+                    {folderItems.length === 1 ? "file" : "files"}
+                  </span>
+                  {isOpen ? (
+                    <ChevronDown className="h-4 w-4 text-slate-400" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4 text-slate-400" />
+                  )}
+                </button>
+
+                {/* Folder Contents */}
+                {isOpen && (
+                  <div className="border-t border-slate-700 divide-y divide-slate-700/50">
+                    {folderItems.map((item) => {
+                      const descStr = item.description
+                        ? String(item.description)
+                        : undefined;
+                      const { note } = parseDocDescription(descStr);
+                      return (
+                        <div
+                          key={item.id}
+                          className="flex items-center gap-3 px-4 py-3 hover:bg-slate-700/30 transition-colors"
+                        >
+                          <div className="bg-amber-500/10 rounded-lg p-2 flex-shrink-0">
+                            <FileText className="h-4 w-4 text-amber-400" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-white text-sm font-medium truncate">
+                              {item.serviceName}
+                            </div>
+                            {note && (
+                              <div className="text-slate-400 text-xs truncate">
+                                {note}
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="border-slate-600 text-slate-300 hover:bg-slate-700 h-7 px-2 text-xs"
+                              disabled={loadingId === item.id}
+                              onClick={() => handleView(item)}
+                            >
+                              {loadingId === item.id ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <FileText className="h-3 w-3" />
+                              )}
+                              <span className="ml-1">View</span>
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="border-green-700 text-green-400 hover:bg-green-900/30 h-7 px-2 text-xs"
+                              disabled={sharingId === item.id}
+                              onClick={() => handleShare(item)}
+                            >
+                              {sharingId === item.id ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <Share2 className="h-3 w-3" />
+                              )}
+                              <span className="ml-1">Share</span>
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 w-7 p-0 text-slate-500 hover:text-red-400"
+                              onClick={() => {
+                                if (confirm("Delete this document?"))
+                                  deleteMut.mutate(item.id);
+                              }}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                  <div className="mt-3">
-                    <div className="text-white font-medium text-sm">
-                      {item.serviceName}
-                    </div>
-                    {itemCat && (
-                      <span className="inline-block mt-1 text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30">
-                        {itemCat}
-                      </span>
-                    )}
-                    {note && (
-                      <div className="text-slate-400 text-xs mt-1">{note}</div>
-                    )}
-                  </div>
-                  <div className="flex gap-2 mt-3">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="border-slate-600 text-slate-300 hover:bg-slate-700 flex-1 h-8"
-                      disabled={loadingId === item.id}
-                      onClick={() => handleView(item)}
-                    >
-                      {loadingId === item.id ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <>
-                          <FileText className="h-3.5 w-3.5 mr-1" />
-                          View
-                        </>
-                      )}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="border-green-700 text-green-400 hover:bg-green-900/30 flex-1 h-8"
-                      disabled={sharingId === item.id}
-                      onClick={() => handleShare(item)}
-                    >
-                      {sharingId === item.id ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <>
-                          <Share2 className="h-3.5 w-3.5 mr-1" />
-                          Share
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
+                )}
+              </div>
             );
           })}
         </div>

@@ -1,6 +1,6 @@
 import html2canvas from "html2canvas";
 import { X } from "lucide-react";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import type { CustomerRecord, RenewalRecord } from "../backend";
 import { Button } from "./ui/button";
@@ -25,26 +25,58 @@ function formatDateMs(ms: number): string {
   return new Date(ms).toLocaleDateString("en-IN");
 }
 
-function printInNewWindow(invoiceEl: HTMLElement) {
-  const win = window.open("", "_blank", "width=400,height=700");
-  if (!win) return;
+async function captureInvoiceCanvas(
+  el: HTMLElement,
+): Promise<HTMLCanvasElement> {
+  return html2canvas(el, {
+    backgroundColor: "#ffffff",
+    scale: 3,
+    useCORS: true,
+    allowTaint: true,
+    imageTimeout: 20000,
+    logging: false,
+    width: el.scrollWidth,
+    height: el.scrollHeight,
+  });
+}
+
+async function downloadInvoicePng(el: HTMLElement, filename: string) {
+  const canvas = await captureInvoiceCanvas(el);
+  canvas.toBlob((blob) => {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }, "image/png");
+}
+
+function printThermal(invoiceEl: HTMLElement) {
+  const win = window.open("", "_blank", "width=420,height=750");
+  if (!win) {
+    toast.error("Pop-up blocked. Allow pop-ups and try again.");
+    return;
+  }
   win.document.write(`
     <html><head>
     <style>
       @page { size: 80mm auto; margin: 2mm; }
-      body { font-family: 'Courier New', Courier, monospace; font-size: 12px; width: 76mm; margin: 0 auto; background: #fff; color: #111; padding: 4px; }
+      body { font-family: 'Courier New', Courier, monospace; font-size: 12px;
+             width: 76mm; margin: 0 auto; background: #fff; color: #111; padding: 4px; }
       img { max-width: 100%; }
+      @media print {
+        body { width: 76mm; }
+        @page { size: 80mm auto; margin: 1mm; }
+      }
     </style>
     </head><body>
     ${invoiceEl.innerHTML}
+    <script>window.onload=function(){window.print();setTimeout(function(){window.close();},800);}<\/script>
     </body></html>
   `);
   win.document.close();
-  win.focus();
-  setTimeout(() => {
-    win.print();
-    win.close();
-  }, 500);
 }
 
 export function PrintInvoice({
@@ -53,6 +85,9 @@ export function PrintInvoice({
   onClose,
 }: PrintInvoiceProps) {
   const invoiceRef = useRef<HTMLDivElement>(null);
+  const [sharing, setSharing] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+
   const today = new Date().toLocaleDateString("en-IN");
   const invoiceNo = `DSK-INV-${c.tokenId}-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=${encodeURIComponent(c.tokenId)}`;
@@ -67,65 +102,74 @@ export function PrintInvoice({
   const renewalDate = renewal ? formatDate(renewal.renewalDate) : today;
 
   const rupee = "\u20b9";
+  const logoAbsUrl = window.location.origin + DSK_LOGO;
 
-  async function handleShare() {
+  async function handleDownloadPng() {
     if (!invoiceRef.current) return;
-    const phone = c.phone.replace(/\D/g, "");
+    setDownloading(true);
     try {
-      const canvas = await html2canvas(invoiceRef.current, {
-        backgroundColor: "#ffffff",
-        scale: 2,
-        useCORS: true,
-        allowTaint: true,
-        imageTimeout: 15000,
-        logging: false,
-      });
-      canvas.toBlob(async (blob) => {
-        if (!blob) {
-          window.open(`https://wa.me/91${phone}`, "_blank");
-          return;
-        }
-        const file = new File([blob], "invoice.png", { type: "image/png" });
-        try {
-          if (navigator.canShare?.({ files: [file] })) {
-            await navigator.share({
-              files: [file],
-              title: `Invoice - ${c.name}`,
-            });
-          } else {
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = "invoice.png";
-            a.click();
-            setTimeout(() => {
-              URL.revokeObjectURL(url);
-              window.open(`https://wa.me/91${phone}`, "_blank");
-            }, 1000);
-          }
-        } catch (shareErr: unknown) {
-          if (shareErr instanceof Error && shareErr.name !== "AbortError") {
-            // Fallback: download and open WhatsApp
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = "invoice.png";
-            a.click();
-            setTimeout(() => {
-              URL.revokeObjectURL(url);
-              window.open(`https://wa.me/91${phone}`, "_blank");
-            }, 1000);
-          }
-        }
-      }, "image/png");
+      await downloadInvoicePng(
+        invoiceRef.current,
+        `Invoice-${c.tokenId}-${c.name}.png`,
+      );
+      toast.success("Invoice image downloaded");
     } catch {
-      // html2canvas failed — fallback to WhatsApp
-      window.open(`https://wa.me/91${phone}`, "_blank");
+      toast.error("Download failed. Try again.");
+    } finally {
+      setDownloading(false);
     }
   }
 
-  // Absolute URL for logo so it works in print window
-  const logoAbsUrl = window.location.origin + DSK_LOGO;
+  async function handleShare() {
+    if (!invoiceRef.current) return;
+    setSharing(true);
+    const phone = c.phone.replace(/\D/g, "");
+    try {
+      const canvas = await captureInvoiceCanvas(invoiceRef.current);
+      const blob = await new Promise<Blob | null>((res) =>
+        canvas.toBlob(res, "image/png"),
+      );
+      if (!blob) throw new Error("canvas blob null");
+
+      const file = new File([blob], `Invoice-${c.name}.png`, {
+        type: "image/png",
+      });
+
+      // Try Web Share API with file (Android Chrome supports this)
+      if (navigator.canShare?.({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: `Invoice - ${c.name}`,
+          text: `Invoice from Document Seva Kendra for ${c.name}`,
+        });
+        return;
+      }
+
+      // Fallback: download PNG then open WhatsApp
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Invoice-${c.name}.png`;
+      a.click();
+      toast.info("Image saved. Opening WhatsApp...");
+      setTimeout(() => {
+        URL.revokeObjectURL(url);
+        const waPhone = phone.length >= 10 ? `91${phone.slice(-10)}` : phone;
+        window.open(`https://wa.me/${waPhone}`, "_blank");
+      }, 1500);
+    } catch (e: unknown) {
+      if (e instanceof Error && e.name === "AbortError") {
+        // user cancelled share sheet — do nothing
+        return;
+      }
+      // Last fallback
+      const waPhone = phone.length >= 10 ? `91${phone.slice(-10)}` : phone;
+      window.open(`https://wa.me/${waPhone}`, "_blank");
+      toast.info("Could not share image automatically. WhatsApp opened.");
+    } finally {
+      setSharing(false);
+    }
+  }
 
   return (
     <div>
@@ -135,7 +179,7 @@ export function PrintInvoice({
         style={{
           fontFamily: "'Courier New', Courier, monospace",
           fontSize: 12,
-          maxWidth: 320,
+          width: 304,
           margin: "0 auto",
           background: "#fff",
           color: "#111",
@@ -294,7 +338,7 @@ export function PrintInvoice({
         </div>
       </div>
 
-      {/* Action buttons - outside captured area */}
+      {/* Action buttons */}
       <div
         style={{
           textAlign: "center",
@@ -305,44 +349,65 @@ export function PrintInvoice({
           flexWrap: "wrap",
         }}
       >
+        {/* Print button - opens thermal print dialog */}
         <button
           type="button"
-          onClick={() =>
-            invoiceRef.current && printInNewWindow(invoiceRef.current)
-          }
+          onClick={() => invoiceRef.current && printThermal(invoiceRef.current)}
           style={{
             background: "#f59e0b",
             border: "none",
             borderRadius: 6,
-            padding: "8px 20px",
+            padding: "8px 16px",
             fontWeight: "bold",
             cursor: "pointer",
             fontSize: 13,
+            color: "#111",
           }}
-          data-ocid="invoice.primary_button"
         >
-          {"\uD83D\uDDB8"} Print / Save PDF
+          \uD83D\uDDB8 Print (Thermal)
         </button>
+
+        {/* Download PNG button */}
         <button
           type="button"
-          onClick={handleShare}
+          onClick={handleDownloadPng}
+          disabled={downloading}
           style={{
-            background: "#25D366",
+            background: downloading ? "#6b7280" : "#3b82f6",
             color: "#fff",
             border: "none",
             borderRadius: 6,
             padding: "8px 16px",
-            cursor: "pointer",
+            cursor: downloading ? "not-allowed" : "pointer",
+            fontSize: 13,
+            fontWeight: "bold",
+          }}
+        >
+          {downloading ? "Saving..." : "\uD83D\uDCF7 Save as PNG"}
+        </button>
+
+        {/* WhatsApp Share button */}
+        <button
+          type="button"
+          onClick={handleShare}
+          disabled={sharing}
+          style={{
+            background: sharing ? "#4ade80" : "#25D366",
+            color: "#fff",
+            border: "none",
+            borderRadius: 6,
+            padding: "8px 16px",
+            cursor: sharing ? "not-allowed" : "pointer",
             fontSize: 13,
             fontWeight: "bold",
             display: "inline-flex",
             alignItems: "center",
             gap: 6,
           }}
-          data-ocid="invoice.secondary_button"
         >
-          {"\uD83D\uDCF2 Share as Image"}
+          {sharing ? "Sharing..." : "\uD83D\uDCF2 Share to WhatsApp"}
         </button>
+
         {onClose && (
           <button
             type="button"
@@ -406,7 +471,6 @@ export function PrintInvoiceModal({
               size="icon"
               onClick={onClose}
               className="text-slate-500 hover:text-slate-800 h-7 w-7"
-              data-ocid="invoice.close_button"
             >
               <X className="h-4 w-4" />
             </Button>
