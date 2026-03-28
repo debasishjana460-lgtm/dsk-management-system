@@ -3,14 +3,17 @@ import {
   AlertTriangle,
   CalendarClock,
   DollarSign,
+  Download,
   MessageCircle,
   Plus,
   QrCode,
   TrendingUp,
   Users,
 } from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
 import type { Page } from "../App";
-import type { CustomerRecord } from "../backend";
+import type { CustomerRecord, ExpenseRecord, RenewalRecord } from "../backend";
 import { Status } from "../backend";
 import { Button } from "../components/ui/button";
 import {
@@ -50,8 +53,137 @@ function statusLabel(status: Status): string {
   return "Completed";
 }
 
+function fmtDate(ts?: bigint): string {
+  if (!ts || ts === 0n) return "";
+  try {
+    const ms = Number(ts / 1_000_000n);
+    if (ms <= 0 || Number.isNaN(ms)) return "";
+    const d = new Date(ms);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toLocaleDateString("en-IN");
+  } catch {
+    return "";
+  }
+}
+
+async function exportAllData(
+  customers: CustomerRecord[],
+  renewals: RenewalRecord[],
+  expenses: ExpenseRecord[],
+) {
+  const rows: string[] = [];
+
+  // Customers sheet
+  rows.push("=== CUSTOMERS ===");
+  rows.push(
+    [
+      "Token ID",
+      "Name",
+      "Phone",
+      "Service Category",
+      "Service Type",
+      "Application No",
+      "Status",
+      "Application Date",
+      "Delivery Date",
+      "Expiry Date",
+      "Total Charged",
+      "Advance Paid",
+      "Balance Due",
+      "Notes",
+    ].join(","),
+  );
+  for (const c of customers) {
+    const st = c.currentStatus as unknown as Record<string, null>;
+    const statusStr =
+      "pending" in st
+        ? "Pending"
+        : "in_process" in st
+          ? "In-Process"
+          : "Completed";
+    rows.push(
+      [
+        c.tokenId,
+        `"${c.name}"`,
+        c.phone,
+        `"${c.serviceCategory}"`,
+        `"${c.serviceType}"`,
+        `"${c.applicationNo ?? ""}"`,
+        statusStr,
+        fmtDate(c.applicationDate),
+        fmtDate(c.deliveryDate),
+        fmtDate(c.expiryDate),
+        c.totalCharged,
+        c.advancePaid,
+        c.balanceDue,
+        `"${(c.notes ?? "").replace(/"/g, '""')}"`,
+      ].join(","),
+    );
+  }
+
+  rows.push("");
+  rows.push("=== RENEWAL HISTORY ===");
+  rows.push(
+    [
+      "Renewal ID",
+      "Customer ID",
+      "Service Name",
+      "Renewal Date",
+      "Next Expiry Date",
+      "Govt Fees",
+      "Service Charge",
+      "Total Charged",
+      "Advance Paid",
+      "Balance Due",
+    ].join(","),
+  );
+  for (const r of renewals) {
+    rows.push(
+      [
+        r.id,
+        r.customerId,
+        `"${r.serviceName}"`,
+        fmtDate(r.renewalDate),
+        fmtDate(r.nextExpiryDate),
+        r.govtFees,
+        r.serviceCharge,
+        r.totalCharged,
+        r.advancePaid,
+        r.balanceDue,
+      ].join(","),
+    );
+  }
+
+  rows.push("");
+  rows.push("=== EXPENSES ===");
+  rows.push(
+    ["Expense ID", "Date", "Category", "Description", "Amount"].join(","),
+  );
+  for (const e of expenses) {
+    rows.push(
+      [
+        e.id,
+        fmtDate(e.date),
+        `"${e.category}"`,
+        `"${e.description.replace(/"/g, '""')}"`,
+        e.amount,
+      ].join(","),
+    );
+  }
+
+  const csv = rows.join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `DSK_Backup_${new Date().toLocaleDateString("en-IN").replace(/\//g, "-")}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function Dashboard({ navigate }: Props) {
   const { actor } = useActor();
+  const [isExporting, setIsExporting] = useState(false);
 
   const { data: profit, isLoading: loadingProfit } = useQuery({
     queryKey: ["profit-summary"],
@@ -70,6 +202,20 @@ export function Dashboard({ navigate }: Props) {
   const { data: renewals, isLoading: loadingRenewals } = useQuery({
     queryKey: ["renewals-30"],
     queryFn: () => actor!.getUpcomingRenewals(BigInt(30)),
+    enabled: !!actor,
+    staleTime: 2 * 60 * 1000,
+  });
+
+  const { data: allRenewals } = useQuery({
+    queryKey: ["all-renewals"],
+    queryFn: () => actor!.getAllRenewalHistory(),
+    enabled: !!actor,
+    staleTime: 2 * 60 * 1000,
+  });
+
+  const { data: expenses } = useQuery({
+    queryKey: ["expenses"],
+    queryFn: () => actor!.listExpenses(),
     enabled: !!actor,
     staleTime: 2 * 60 * 1000,
   });
@@ -93,6 +239,18 @@ export function Dashboard({ navigate }: Props) {
     const d = daysUntil(r.expiryDate);
     return d !== null && d <= 7;
   });
+
+  async function handleExport() {
+    setIsExporting(true);
+    try {
+      await exportAllData(activeCustomers, allRenewals ?? [], expenses ?? []);
+      toast.success("ডাটা সফলভাবে export হয়েছে!");
+    } catch {
+      toast.error("Export করতে সমস্যা হয়েছে।");
+    } finally {
+      setIsExporting(false);
+    }
+  }
 
   function whatsappLink(c: CustomerRecord): string {
     const phone = c.phone.replace(/\D/g, "");
@@ -318,7 +476,7 @@ export function Dashboard({ navigate }: Props) {
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Button
           onClick={() => navigate({ name: "customer-add" })}
           variant="outline"
@@ -342,6 +500,17 @@ export function Dashboard({ navigate }: Props) {
         >
           <QrCode className="h-5 w-5" />
           <span className="text-xs">Scan QR</span>
+        </Button>
+        <Button
+          onClick={handleExport}
+          disabled={isExporting}
+          variant="outline"
+          className="border-green-700 text-green-400 hover:bg-green-900/30 flex flex-col gap-1 h-auto py-3"
+        >
+          <Download className="h-5 w-5" />
+          <span className="text-xs">
+            {isExporting ? "Exporting..." : "Export Data"}
+          </span>
         </Button>
       </div>
     </div>

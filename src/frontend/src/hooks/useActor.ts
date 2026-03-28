@@ -28,12 +28,6 @@ export function useActor() {
       const actor = await createActorWithConfig(actorOptions);
       const adminToken = getSecretParameter("caffeineAdminToken") || "";
       await actor._initializeAccessControlWithSecret(adminToken);
-      // Always claim first admin to ensure permissions are set
-      try {
-        await actor.claimFirstAdmin();
-      } catch (_) {
-        // Already admin or not applicable — safe to ignore
-      }
       return actor;
     },
     // Only refetch when identity changes
