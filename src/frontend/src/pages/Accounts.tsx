@@ -79,9 +79,17 @@ export function Accounts({ navigate: _ }: Props) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["expenses"] });
       qc.invalidateQueries({ queryKey: ["expense-summary"] });
-      toast.success("Expense deleted");
+      qc.invalidateQueries({ queryKey: ["profit-summary"] });
+      toast.success("Deleted Successfully");
     },
+    onError: () => toast.error("Failed to delete expense"),
   });
+
+  function handleDelete(id: string) {
+    if (window.confirm("Are you sure you want to delete this expense?")) {
+      deleteMut.mutate(id);
+    }
+  }
 
   const netEarnings = (profit?.totalNetProfit ?? 0) - (expSummary?.total ?? 0);
 
@@ -119,7 +127,9 @@ export function Accounts({ navigate: _ }: Props) {
               <Skeleton className="h-7 w-20 mt-2" />
             ) : (
               <div
-                className={`text-2xl font-bold mt-1 ${netEarnings >= 0 ? "text-purple-400" : "text-red-400"}`}
+                className={`text-2xl font-bold mt-1 ${
+                  netEarnings >= 0 ? "text-purple-400" : "text-red-400"
+                }`}
               >
                 ₹{netEarnings.toFixed(0)}
               </div>
@@ -243,7 +253,8 @@ export function Accounts({ navigate: _ }: Props) {
                             variant="ghost"
                             size="icon"
                             className="h-7 w-7 text-slate-400 hover:text-red-400"
-                            onClick={() => deleteMut.mutate(e.id)}
+                            disabled={deleteMut.isPending}
+                            onClick={() => handleDelete(e.id)}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>

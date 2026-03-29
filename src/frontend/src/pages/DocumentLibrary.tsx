@@ -7,7 +7,9 @@ import {
   Folder,
   FolderOpen,
   Loader2,
+  Pencil,
   Plus,
+  Search,
   Share2,
   Trash2,
   Upload,
@@ -67,6 +69,9 @@ export function DocumentLibrary({ navigate: _ }: Props) {
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [sharingId, setSharingId] = useState<string | null>(null);
   const [openFolders, setOpenFolders] = useState<Set<string>>(new Set());
+  const [searchQuery, setSearchQuery] = useState("");
+  const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
 
   const { data: items, isLoading } = useQuery({
     queryKey: ["doc-library"],
@@ -105,7 +110,6 @@ export function DocumentLibrary({ navigate: _ }: Props) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["doc-library"] });
       toast.success("Document uploaded successfully");
-      // Auto-open the new folder
       if (category) {
         setOpenFolders((prev) => new Set(prev).add(category));
       }
@@ -124,8 +128,56 @@ export function DocumentLibrary({ navigate: _ }: Props) {
     mutationFn: (id: string) => actor!.deleteDocumentLibraryItem(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["doc-library"] });
-      toast.success("Deleted");
+      toast.success("Deleted Successfully");
     },
+    onError: () => toast.error("Failed to delete document"),
+  });
+
+  // Rename folder: updates all items in the folder to new category
+  const renameFolderMut = useMutation({
+    mutationFn: async ({
+      oldName,
+      newName,
+    }: { oldName: string; newName: string }) => {
+      if (!actor) throw new Error("Not connected");
+      const folderItems = allItems.filter((item) => {
+        const descStr = item.description ? String(item.description) : undefined;
+        const { category: cat } = parseDocDescription(descStr);
+        return (cat || "Uncategorized") === oldName;
+      });
+      // For each item, delete and re-add with new category
+      for (const item of folderItems) {
+        const bytes = await item.blob.getBytes();
+        const blob = ExternalBlob.fromBytes(bytes);
+        const descStr = item.description ? String(item.description) : undefined;
+        const { note } = parseDocDescription(descStr);
+        const newDesc =
+          newName !== "Uncategorized"
+            ? note
+              ? `cat:${newName}|${note}`
+              : `cat:${newName}`
+            : note || undefined;
+        await actor.addDocumentLibraryItem({
+          serviceName: item.serviceName,
+          description: newDesc,
+          blob,
+        });
+        await actor.deleteDocumentLibraryItem(item.id);
+      }
+    },
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ["doc-library"] });
+      setOpenFolders((prev) => {
+        const next = new Set(prev);
+        next.delete(vars.oldName);
+        next.add(vars.newName);
+        return next;
+      });
+      setRenamingFolder(null);
+      setRenameValue("");
+      toast.success("Folder renamed successfully");
+    },
+    onError: () => toast.error("Rename failed"),
   });
 
   async function loadBlobBytes(
@@ -237,10 +289,40 @@ export function DocumentLibrary({ navigate: _ }: Props) {
     });
   }
 
+  function startRename(folderName: string) {
+    setRenamingFolder(folderName);
+    setRenameValue(folderName === "Uncategorized" ? "" : folderName);
+  }
+
+  function commitRename(oldName: string) {
+    const newName = renameValue.trim();
+    if (!newName || newName === oldName) {
+      setRenamingFolder(null);
+      return;
+    }
+    renameFolderMut.mutate({ oldName, newName });
+  }
+
   // Group items by category
   const allItems = (items ?? []) as DocItem[];
+
+  // Search filter
+  const q = searchQuery.toLowerCase().trim();
+  const filteredItems = q
+    ? allItems.filter((item) => {
+        const descStr = item.description ? String(item.description) : undefined;
+        const { category: cat, note } = parseDocDescription(descStr);
+        const folderName = (cat || "Uncategorized").toLowerCase();
+        return (
+          item.serviceName.toLowerCase().includes(q) ||
+          note.toLowerCase().includes(q) ||
+          folderName.includes(q)
+        );
+      })
+    : allItems;
+
   const grouped = new Map<string, DocItem[]>();
-  for (const item of allItems) {
+  for (const item of filteredItems) {
     const descStr = item.description ? String(item.description) : undefined;
     const { category: cat } = parseDocDescription(descStr);
     const key = cat || "Uncategorized";
@@ -251,6 +333,26 @@ export function DocumentLibrary({ navigate: _ }: Props) {
   return (
     <div className="space-y-5">
       <h1 className="text-2xl font-bold text-white">Document Library</h1>
+
+      {/* Search Bar */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+        <Input
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search by service name, description, or folder..."
+          className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500 pl-10"
+        />
+        {searchQuery && (
+          <button
+            type="button"
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+            onClick={() => setSearchQuery("")}
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
+      </div>
 
       {/* Upload Form */}
       <Card className="bg-slate-800 border-slate-700">
@@ -355,39 +457,97 @@ export function DocumentLibrary({ navigate: _ }: Props) {
         <div className="text-center py-12 text-slate-400">
           No documents uploaded yet.
         </div>
+      ) : grouped.size === 0 ? (
+        <div className="text-center py-12 text-slate-400">
+          No documents found.
+        </div>
       ) : (
         <div className="space-y-3">
           {Array.from(grouped.entries()).map(([folderName, folderItems]) => {
             const isOpen = openFolders.has(folderName);
+            const isRenaming = renamingFolder === folderName;
             return (
               <div
                 key={folderName}
                 className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden"
               >
                 {/* Folder Header */}
-                <button
-                  type="button"
-                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-700/50 transition-colors text-left"
-                  onClick={() => toggleFolder(folderName)}
-                >
-                  {isOpen ? (
-                    <FolderOpen className="h-5 w-5 text-amber-400 flex-shrink-0" />
+                <div className="flex items-center gap-3 px-4 py-3">
+                  <button
+                    type="button"
+                    className="flex items-center gap-3 flex-1 hover:opacity-80 transition-opacity text-left"
+                    onClick={() => !isRenaming && toggleFolder(folderName)}
+                  >
+                    {isOpen ? (
+                      <FolderOpen className="h-5 w-5 text-amber-400 flex-shrink-0" />
+                    ) : (
+                      <Folder className="h-5 w-5 text-amber-400 flex-shrink-0" />
+                    )}
+                    {isRenaming ? (
+                      <input
+                        className="flex-1 bg-slate-700 border border-amber-500 rounded px-2 py-0.5 text-white text-sm focus:outline-none"
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onClick={(e) => e.stopPropagation()}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") commitRename(folderName);
+                          if (e.key === "Escape") setRenamingFolder(null);
+                        }}
+                      />
+                    ) : (
+                      <span className="text-white font-semibold flex-1">
+                        {folderName}
+                      </span>
+                    )}
+                    <span className="text-xs text-slate-400 mr-2">
+                      {folderItems.length}{" "}
+                      {folderItems.length === 1 ? "file" : "files"}
+                    </span>
+                    {isOpen ? (
+                      <ChevronDown className="h-4 w-4 text-slate-400" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4 text-slate-400" />
+                    )}
+                  </button>
+                  {/* Rename / Save buttons */}
+                  {isRenaming ? (
+                    <div className="flex gap-1">
+                      <Button
+                        size="sm"
+                        className="h-7 px-2 bg-amber-500 hover:bg-amber-600 text-slate-900 text-xs"
+                        onClick={() => commitRename(folderName)}
+                        disabled={renameFolderMut.isPending}
+                      >
+                        {renameFolderMut.isPending ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          "Save"
+                        )}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2 text-slate-400 hover:text-white text-xs"
+                        onClick={() => setRenamingFolder(null)}
+                      >
+                        <X className="h-3 w-3" />
+                      </Button>
+                    </div>
                   ) : (
-                    <Folder className="h-5 w-5 text-amber-400 flex-shrink-0" />
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 w-7 p-0 text-slate-500 hover:text-amber-400"
+                      title="Rename folder"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        startRename(folderName);
+                      }}
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
                   )}
-                  <span className="text-white font-semibold flex-1">
-                    {folderName}
-                  </span>
-                  <span className="text-xs text-slate-400 mr-2">
-                    {folderItems.length}{" "}
-                    {folderItems.length === 1 ? "file" : "files"}
-                  </span>
-                  {isOpen ? (
-                    <ChevronDown className="h-4 w-4 text-slate-400" />
-                  ) : (
-                    <ChevronRight className="h-4 w-4 text-slate-400" />
-                  )}
-                </button>
+                </div>
 
                 {/* Folder Contents */}
                 {isOpen && (
@@ -448,8 +608,13 @@ export function DocumentLibrary({ navigate: _ }: Props) {
                               size="sm"
                               variant="ghost"
                               className="h-7 w-7 p-0 text-slate-500 hover:text-red-400"
+                              disabled={deleteMut.isPending}
                               onClick={() => {
-                                if (confirm("Delete this document?"))
+                                if (
+                                  window.confirm(
+                                    "Are you sure you want to delete this document?",
+                                  )
+                                )
                                   deleteMut.mutate(item.id);
                               }}
                             >

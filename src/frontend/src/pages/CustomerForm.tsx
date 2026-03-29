@@ -108,6 +108,13 @@ export function CustomerForm({ navigate, tokenId }: Props) {
     staleTime: 2 * 60 * 1000,
   });
 
+  const { data: allCustomers } = useQuery({
+    queryKey: ["customers"],
+    queryFn: () => actor!.listCustomers(),
+    enabled: !!actor,
+    staleTime: 2 * 60 * 1000,
+  });
+
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [serviceCategory, setServiceCategory] = useState(
@@ -131,6 +138,7 @@ export function CustomerForm({ navigate, tokenId }: Props) {
   const [notes, setNotes] = useState("");
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [duplicateWarning, setDuplicateWarning] = useState("");
 
   const isCompleted = status === Status.completed;
 
@@ -144,7 +152,6 @@ export function CustomerForm({ navigate, tokenId }: Props) {
     if (existing) {
       setName(existing.name);
       setPhone(existing.phone);
-      // Check if the category is a known one or custom
       if (existing.serviceCategory in SERVICE_CATEGORIES) {
         setServiceCategory(existing.serviceCategory);
         setIsCustomCategory(false);
@@ -174,12 +181,73 @@ export function CustomerForm({ navigate, tokenId }: Props) {
     }
   }, [existing]);
 
+  // Check for duplicate (phone + service)
+  function checkDuplicate(phoneVal: string, service: string): boolean {
+    if (isEdit || !allCustomers || !phoneVal || !service) return false;
+    const cleanPhone = phoneVal.replace(/\D/g, "");
+    return allCustomers.some((c) => {
+      if (c.isDeleted) return false;
+      const cPhone = c.phone.replace(/\D/g, "");
+      const cService = c.customServiceName || c.serviceType;
+      return (
+        cPhone === cleanPhone &&
+        cService.toLowerCase() === service.toLowerCase()
+      );
+    });
+  }
+
+  function handlePhoneChange(val: string) {
+    setPhone(val);
+    const service = isCustom ? customServiceName : serviceType;
+    if (service && val) {
+      setDuplicateWarning(
+        checkDuplicate(val, service)
+          ? "This service has already been registered for this customer!"
+          : "",
+      );
+    }
+  }
+
+  function handleServiceChange(val: string) {
+    setServiceType(val);
+    setIsCustom(val === "__custom__");
+    if (val !== "__custom__" && phone) {
+      setDuplicateWarning(
+        checkDuplicate(phone, val)
+          ? "This service has already been registered for this customer!"
+          : "",
+      );
+    } else {
+      setDuplicateWarning("");
+    }
+  }
+
+  function handleCustomServiceChange(val: string) {
+    setCustomServiceName(val);
+    if (phone) {
+      setDuplicateWarning(
+        checkDuplicate(phone, val)
+          ? "This service has already been registered for this customer!"
+          : "",
+      );
+    }
+  }
+
   const saveMut = useMutation({
     mutationFn: async () => {
       if (!actor)
         throw new Error(
           "Server not ready. Please wait a moment and try again.",
         );
+
+      // Final duplicate check before submit
+      const service = isCustom ? customServiceName : serviceType;
+      if (!isEdit && checkDuplicate(phone, service)) {
+        throw new Error(
+          "This service has already been registered for this customer!",
+        );
+      }
+
       setUploading(true);
       const docBlobs: ExternalBlob[] = await Promise.all(
         uploadedFiles.map(async (f) => {
@@ -236,7 +304,14 @@ export function CustomerForm({ navigate, tokenId }: Props) {
     },
     onError: (e) => {
       setUploading(false);
-      toast.error(`Failed: ${String(e)}`);
+      const msg = String(e);
+      if (msg.includes("already been registered")) {
+        toast.error(
+          "This service has already been registered for this customer!",
+        );
+      } else {
+        toast.error(`Failed: ${msg}`);
+      }
     },
   });
 
@@ -256,7 +331,8 @@ export function CustomerForm({ navigate, tokenId }: Props) {
   }
 
   const isConnecting = isFetching && !actor;
-  const isSubmitDisabled = saveMut.isPending || uploading || !actor;
+  const isSubmitDisabled =
+    saveMut.isPending || uploading || !actor || !!duplicateWarning;
 
   return (
     <div className="space-y-5 max-w-2xl">
@@ -311,7 +387,7 @@ export function CustomerForm({ navigate, tokenId }: Props) {
                 <p className={lbl}>Phone *</p>
                 <Input
                   value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
+                  onChange={(e) => handlePhoneChange(e.target.value)}
                   required
                   className={fieldCls}
                   placeholder="Phone number"
@@ -356,6 +432,7 @@ export function CustomerForm({ navigate, tokenId }: Props) {
                     setServiceCategory(v);
                     setServiceType("");
                     setIsCustom(false);
+                    setDuplicateWarning("");
                   }
                 }}
                 className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-md text-white text-sm"
@@ -388,11 +465,7 @@ export function CustomerForm({ navigate, tokenId }: Props) {
               <p className={lbl}>Service Type *</p>
               <select
                 value={serviceType}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setServiceType(v);
-                  setIsCustom(v === "__custom__");
-                }}
+                onChange={(e) => handleServiceChange(e.target.value)}
                 className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-md text-white text-sm"
                 required
                 data-ocid="customer.select"
@@ -411,12 +484,20 @@ export function CustomerForm({ navigate, tokenId }: Props) {
                 <p className={lbl}>Custom Service Name *</p>
                 <Input
                   value={customServiceName}
-                  onChange={(e) => setCustomServiceName(e.target.value)}
+                  onChange={(e) => handleCustomServiceChange(e.target.value)}
                   required
                   className={fieldCls}
                   placeholder="Enter service name"
                   data-ocid="customer.input"
                 />
+              </div>
+            )}
+            {/* Duplicate Warning */}
+            {duplicateWarning && (
+              <div className="flex items-center gap-2 p-3 bg-orange-900/30 border border-orange-500/50 rounded-lg">
+                <span className="text-orange-400 text-sm font-medium">
+                  ⚠️ {duplicateWarning}
+                </span>
               </div>
             )}
           </CardContent>

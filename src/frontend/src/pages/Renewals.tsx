@@ -1,13 +1,16 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CalendarClock,
   Clock,
   History,
+  Loader2,
   MessageCircle,
   Printer,
   RefreshCw,
+  Trash2,
 } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
 import type { Page } from "../App";
 import type { CustomerRecord } from "../backend";
 import { PrintInvoiceModal } from "../components/PrintInvoice";
@@ -39,6 +42,7 @@ function daysUntil(ts?: bigint): number | null {
 
 export function Renewals({ navigate }: Props) {
   const { actor } = useActor();
+  const qc = useQueryClient();
   const [renewCustomer, setRenewCustomer] = useState<CustomerRecord | null>(
     null,
   );
@@ -58,6 +62,24 @@ export function Renewals({ navigate }: Props) {
     queryFn: () => actor!.getAllRenewalHistory(),
     enabled: !!actor,
     staleTime: 2 * 60 * 1000,
+  });
+
+  const deleteRenewalMut = useMutation({
+    mutationFn: async (id: string) => {
+      if (!actor) throw new Error("Not connected");
+      const result = await actor.deleteRenewalRecord(id);
+      if (!result) throw new Error("Record not found");
+      return result;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["all-renewals"] });
+      qc.invalidateQueries({ queryKey: ["customers"] });
+      toast.success("Deleted Successfully");
+    },
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : "Delete failed";
+      toast.error(msg);
+    },
   });
 
   const withExpiry = (customers ?? [])
@@ -109,6 +131,12 @@ export function Renewals({ navigate }: Props) {
     const phone = c.phone.replace(/\D/g, "");
     const msg = `Hello ${c.name}, this is a reminder from DSK. Your ${c.serviceType} is due for renewal on ${formatDate(c.expiryDate)}. Please contact us soon.`;
     return `https://wa.me/91${phone}?text=${encodeURIComponent(msg)}`;
+  }
+
+  function handleDeleteRenewal(id: string) {
+    if (window.confirm("Do you want to delete this renewal record?")) {
+      deleteRenewalMut.mutate(id);
+    }
   }
 
   return (
@@ -273,9 +301,9 @@ export function Renewals({ navigate }: Props) {
                         <th className="text-left p-3 font-medium">Customer</th>
                         <th className="text-left p-3 font-medium">ID</th>
                         <th className="text-left p-3 font-medium">Service</th>
-                        <th className="text-left p-3 font-medium">Govt Fees</th>
                         <th className="text-left p-3 font-medium">Total</th>
                         <th className="text-left p-3 font-medium">Balance</th>
+                        <th className="text-left p-3 font-medium">Action</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-700/50">
@@ -291,7 +319,7 @@ export function Renewals({ navigate }: Props) {
                               {formatDate(r.renewalDate)}
                             </td>
                             <td className="p-3 text-white">
-                              {cust?.name ?? "—"}
+                              {cust?.name ?? "\u2014"}
                             </td>
                             <td className="p-3 text-amber-400 font-mono">
                               {r.customerId}
@@ -304,9 +332,6 @@ export function Renewals({ navigate }: Props) {
                                 Renewal
                               </div>
                             </td>
-                            <td className="p-3 text-slate-300">
-                              ₹{r.govtFees.toFixed(2)}
-                            </td>
                             <td className="p-3 text-amber-400 font-semibold">
                               ₹{r.totalCharged.toFixed(2)}
                             </td>
@@ -318,6 +343,23 @@ export function Renewals({ navigate }: Props) {
                               }`}
                             >
                               ₹{r.balanceDue.toFixed(2)}
+                            </td>
+                            <td className="p-3">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 w-7 p-0 text-red-500 hover:text-red-400 hover:bg-red-900/20"
+                                disabled={deleteRenewalMut.isPending}
+                                onClick={() => handleDeleteRenewal(r.id)}
+                                title="Delete"
+                                data-ocid={`renewal-history.delete.${idx + 1}`}
+                              >
+                                {deleteRenewalMut.isPending ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                )}
+                              </Button>
                             </td>
                           </tr>
                         );
